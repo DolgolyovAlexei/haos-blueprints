@@ -1,0 +1,80 @@
+blueprint:
+  name: Time of Day State Machine (with Sensors)
+  description: >
+    Map a list of time-of-day states (input_select options) to a list of time entities or sensors.
+    At each threshold, set the input_select to the corresponding state.
+    Index-to-index mapping is guaranteed (state[0] ↔ time[0], state[1] ↔ time[1], etc).
+    Times can be input_datetime or sensors reporting HH:MM[:SS] values (e.g. sunset).
+  domain: automation
+
+  input:
+    tod_select:
+      name: Time of Day selector
+      description: The input_select entity that holds the current time-of-day state
+      selector:
+        entity:
+          domain: input_select
+
+    tod_states:
+      name: Time of Day states
+      description: Ordered list of state names (must match input_select options)
+      selector:
+        text:
+          multiple: true
+
+    tod_times:
+      name: Time of Day times/sensors
+      description: Ordered list of input_datetime or sensor entities (same length as states)
+      selector:
+        entity:
+          multiple: true
+
+mode: restart
+
+trigger:
+  # Trigger whenever any time-of-day entity changes
+  - platform: state
+    entity_id: !input tod_times
+  # Also trigger every minute to re-evaluate
+  - platform: time_pattern
+    minutes: "/1"
+
+variables:
+  states: !input tod_states
+  times: !input tod_times
+  tod_select: !input tod_select
+
+  # Convert each entity state into seconds since midnight
+  thresholds: >
+    {% set out = [] %}
+    {% for t in times %}
+      {% set val = states(t) | as_datetime %}
+      {% if val is not none %}
+        {% set sec = dt.hour * 3600 + dt.minute * 60 + dt.second %}
+        {% set out = out + [sec] %}
+      {% endif %}
+    {% endfor %}
+    {{ out }}
+
+  now_sec: >
+    {% set n = now() %}
+    {{ n.hour * 3600 + n.minute * 60 + n.second }}
+
+  # Find the correct index based on current time
+  current_index: >
+    {% set idx = 0 %}
+    {% for i in range(thresholds|length) %}
+      {% if now_sec >= thresholds[i] %}
+        {% set idx = i %}
+      {% endif %}
+    {% endfor %}
+    {{ idx }}
+
+  current_state: "{{ states[current_index] }}"
+
+action:
+  - service: input_select.select_option
+    target:
+      entity_id: "{{ tod_select }}"
+    data:
+      option: "{{ current_state }}"

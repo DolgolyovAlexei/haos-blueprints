@@ -1,0 +1,374 @@
+blueprint:
+  name: "Custom: Washing Machine Notifications"
+  description: >
+    Sends notifications when washing starts (with mode details),
+    when errors occur, and when run completes.
+  domain: automation
+  input:
+    time_group:
+      name: "Time"
+      collapsed: false
+      input:
+        remaining_time_sensor:
+          name: Remaining Time Sensor
+          description: "Sensor that contains remaining time in format `hh:mm::ss`. Note: `-`, 'unknown' values means remaining time is not available."
+          selector:
+            entity:
+              domain: sensor
+           
+        run_state_sensor:
+          name: Run State Sensor
+          description: "Sensor that run state of the device"
+          selector:
+            entity:
+              domain: sensor
+              
+        run_state_completion_id:
+          name: Run State Completion Id
+          description: "Identifier of run state that indicates that run is completed"
+          default: 'Цикл завершен.'
+          selector:
+            text:     
+              
+        notify_time_to_end:
+          name: Notify Time-to-End (minutes)
+          description: "Send notification if run is about to be finished"
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 60
+              unit_of_measurement: minutes
+              mode: slider
+              
+    persistent_state:
+      name: "Persistent State"
+      collapsed: false
+      input:
+        automation_state_entity:
+          name: Automation state entity
+          description: "`input_text` that stores the automation state in JSON format. Required for all features proper functioning. `Doesn't require specific initial state, values of the entity can be empty`"
+          selector:
+            entity:
+              domain: input_text
+              
+        automation_state_placeholder_key:
+          name: Automation state placeholder key
+          description: Overrides key for persistent storage if not empty. By default uses identifier of target light, otherwise uses constant. `Don't override it if you don't understand the meaning`
+          default: ''
+          selector:
+            text:                 
+              
+    notification_group:
+      name: "Notification"
+      collapsed: false
+      input:
+        input_device_name:
+          name: "Device Name"
+          description: Device name (used for notifications)
+          default: "Стиральная машина"
+          selector:
+            text:
+    
+        notify_target:
+          name: Notification Target
+          description: Device or service to send notifications
+          selector:
+            entity:
+              domain: notify              
+              
+    info_group:
+      name: "Info"
+      collapsed: false
+      input:
+        non_running_state_ids:
+          name: Non Running State ID(s)
+          description: "List of run state ID(s) that indicates that device is not actually doing its direct job"
+          default: []
+          selector:
+            text:
+              multiple: true   
+      
+        preparation_state_id:
+          name: Preparation Mode State ID (optional)
+          description: "Optional run state ID that indicates that device is preparing to run"
+          default: 'Подготовка к сушке'
+          selector:
+            text:     
+      
+        error_message_sensor:
+          name: Error Message Sensor
+          description: "Sensor that reports possible error message"
+          selector:
+            entity:
+              domain: sensor
+              
+        tub_clean_counter_sensor:
+          name: Tub Clean Counter Sensor (Optional)
+          description: "Sensor that reports tub clean counter value"
+          selector:
+            entity:
+              domain: 
+                - sensor
+                - input_number
+              
+        tub_clean_counter_threshold:
+          name: Tub Clean Counter Threshold
+          description: "Threshold for tub clean counter value when notification should be sent. Zero means no reports."
+          default: 30
+          selector:
+            number:
+              min: 0
+              max: 100
+              mode: slider              
+              
+    details_group:
+      name: "Details"
+      collapsed: false
+      input:
+        startup_info_sensors:
+          name: Startup Info Sensors (Optional)
+          description: "A list of sensor with some details that will be reported on machine startup notification"
+          default: []
+          selector:
+            entity:
+              domain: 
+                - sensor
+                - binary_sensor
+              multiple: true
+              
+        startup_info_texts:
+          name: Startup Info Texts
+          description: "List of texts associated with `Startup Info Sensors` (one per sensor)"
+          default: []
+          selector:
+            text:
+              multiple: true                 
+      
+mode: restart
+
+trigger:
+  # Remaining time changes
+  - platform: state
+    entity_id: !input remaining_time_sensor
+  # Error message appears
+  - platform: state
+    entity_id: !input error_message_sensor
+  # Run state
+  - platform: state
+    entity_id: !input run_state_sensor
+  # Tub clean sensor changed
+  - platform: state
+    entity_id: !input tub_clean_counter_sensor
+
+condition: []
+
+
+variables:
+  # JSON state constants
+  state_notification_about_renaming_time_sent: 'nart'
+  state_notification_about_start_sent: 'nass'
+  state_notification_about_preparation_sent: 'naps'
+  
+  # Inputs
+  run_state_sensor: !input run_state_sensor
+  non_running_state_ids: !input non_running_state_ids
+  preparation_state_id: !input preparation_state_id
+  error_message_sensor: !input error_message_sensor  
+  remaining_time_sensor: !input remaining_time_sensor
+  notify_target: !input notify_target
+  notify_time_to_end: !input notify_time_to_end
+  input_device_name: !input input_device_name  
+  tub_clean_counter_sensor: !input tub_clean_counter_sensor
+  tub_clean_counter_threshold: !input tub_clean_counter_threshold 
+  run_state_completion_id: !input run_state_completion_id
+      
+  # States
+  remaining: "{{ states(remaining_time_sensor) }}"
+  device_name: "{{ input_device_name }}"
+  run_state: "{{ states(run_state_sensor) }}"
+  is_running: >
+    {{ run_state not in ['unknown', 'unavailable', 'waiting', '-'] 
+    and run_state not in non_running_state_ids
+    and run_state != preparation_state_id
+    and run_state != run_state_completion_id
+    and remaining not in ['unknown', 'unavailable'] }}
+  remaining_time_in_minutes: >
+    {% if remaining not in ['unknown', 'unavailable'] %}
+      {% set parts = remaining.split(':') %}
+      {% set total = parts[0]|int * 60 + parts[1]|int %}
+      {{ total }}
+    {% else %}
+      0
+    {% endif %}
+  
+  # JSON global state.
+  automation_state_entity: !input automation_state_entity
+  automation_state_global: >
+    {% set text = states(automation_state_entity) | string %}
+    {% if text in ['unknown','unavailable','none',''] %}
+      {{ dict() }}
+    {% else %}
+      {{ text | from_json }}
+    {% endif %}
+  automation_state_placeholder_key: !input automation_state_placeholder_key
+  automation_state_key: >
+    {% if automation_state_placeholder_key != '' %}
+      {{ automation_state_placeholder_key }}
+    {% else %}
+      {{ remaining_time_sensor }}
+    {% endif %}
+  automation_state: "{{ automation_state_global.get(automation_state_key, dict()) }}"
+  
+  is_debug: false
+
+action:
+
+  # Debug info (log if required)
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info"
+              message: >
+                run_state = {{ run_state }},
+                non_running_state_ids = {{ non_running_state_ids }},
+                remaining_time = {{ states(remaining_time_sensor) }},
+                is_running = {{ is_running }},
+                t = {{ automation_state.get(state_notification_about_start_sent, false)  }}
+
+  - choose:
+      # 🟢 Case 1: Washing started
+      - conditions:
+          - condition: template
+            value_template: "{{ not automation_state.get(state_notification_about_start_sent, false) and is_running }}"
+        sequence:
+          - variables:
+              startup_info_sensors: !input startup_info_sensors
+              startup_info_texts: !input startup_info_texts
+              message: >
+                {% set ns = namespace(text = '🧺 ' ~ device_name ~ ': старт. Длительность: `' ~ remaining ~ '`.') %}
+                {% for i in range(startup_info_sensors | count) %}
+                  {% set ns.text = ns.text ~ ' ' ~ startup_info_texts[i] ~ ': [' ~ states(startup_info_sensors[i])  ~ '].'  %}
+                {% endfor %}
+                {{ ns.text }}
+
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: "{{ message }}"
+              
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({ state_notification_about_start_sent: true })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                             
+
+      # ✅ Case 2: Run completed
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ not is_running 
+              and automation_state.get(state_notification_about_start_sent, false) 
+              and (states(run_state_sensor) in [run_state_completion_id, 'unknown', '-'] or states(remaining_time_sensor) in ['unknown', '-']) }}
+        sequence:
+        
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: >
+                🟢 {{ device_name }}: завершено. Не забудьте достать вещи!        
+        
+          # Reset the state.
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({ state_notification_about_renaming_time_sent: false, state_notification_about_start_sent: false, state_notification_about_preparation_sent: false })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+
+      # ✅ Case 3: Preparation
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ preparation_state_id != ''
+                and states(run_state_sensor) == preparation_state_id
+                and not automation_state.get(state_notification_about_preparation_sent, false) }}
+        sequence:
+        
+          # Reset the state.
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({ state_notification_about_preparation_sent: true })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}        
+        
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: >
+                ⚙️ {{ device_name }}: подготовка активирована!
+
+      # 🔴 Case 4: Error message
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.entity_id == error_message_sensor and error|length > 0 }}"
+        sequence:
+          - variables:
+              error: "{{ states(error_message_sensor) }}"
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: >
+                ⚠️ {{ device_name }}: ошибка. Детали: {{ error }}. Для более подробной информации обратитесь к приложению LG ThinQ.
+
+      # ⏰ Case 5: Notify before end
+      - conditions:
+          - condition: template
+            value_template: >
+              {% if not automation_state.get(state_notification_about_renaming_time_sent, false) and is_running %}
+                {{ remaining_time_in_minutes <= notify_time_to_end }}
+              {% else %}
+                {{ false }}
+              {% endif %}
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({ state_notification_about_renaming_time_sent: true })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                         
+        
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: >
+                🟢 {{ device_name }}: завершение через {{ remaining.split(':')[1] }} минут.
+                
+      # 🔴 Case 6: Tub clean notification
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.entity_id == tub_clean_counter_sensor and tub_clean_counter_threshold != 0 and (states(tub_clean_counter_sensor) | int) > tub_clean_counter_threshold }}"
+        sequence:
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: >
+                ⚠️ {{ device_name }}: внимание. Необходима чистка барабана.
+                Число стирок: {{ states(tub_clean_counter_sensor) | int }}.
+                Допустимый предел: {{ tub_clean_counter_threshold }}.       

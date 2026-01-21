@@ -1,0 +1,142 @@
+blueprint:
+  name: "Custom: Day Scene Controller"
+  description: "Allows to control time of day scenes"
+  domain: automation
+
+  input:
+    states_group:
+      name: States
+      collapsed: false
+      input:
+        time_of_day_state:
+          name: Time of Day state selector
+          description: The input_select entity that holds the current time-of-day state
+          selector:
+            entity:
+              domain: input_select
+              
+        control_switch:
+          name: Control Switch
+          description: Controls if scenes switch must work or default scene should be applied
+          selector:
+            entity:
+              domain:
+                - binary_sensor
+                - input_boolean
+
+    scenes_group:
+      name: Scenes
+      collapsed: false
+      input:
+        scenes:
+          name: Scenes
+          description: Ordered list of scenes (each scene per time of day state list)
+          selector:
+            entity:
+              domain:
+                - scene
+              multiple: true
+    
+        default_scene:
+          name: Default Scene
+          description: Scene enabled when enable switch is off
+          selector:
+            entity:
+              domain:
+                - scene
+                
+        enable_default_scene_on_transition:
+          name: Enable Default Scene On Transition
+          description: Controls if default scene should be enabled on scene transition (i.e. before moving to other scene use default scene)
+          default: true
+          selector:
+            boolean:
+          
+    actions_group:
+      name: Actions
+      collapsed: true
+      input:          
+        scene_applied_callback:
+          name: Scene Applied Callback
+          description: Set of action invoked whenever active scene is applied
+          default: []
+          selector:
+            action: {}
+            
+        default_scene_applied_callback:
+          name: Default Scene Applied Callback
+          description: Set of action invoked whenever default scene is applied
+          default: []
+          selector:
+            action: {}
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input time_of_day_state
+
+  - platform: state
+    entity_id: !input control_switch
+    
+variables:
+  # Constants
+  is_debug: false
+
+  # Declarations
+  control_switch: !input control_switch
+  time_of_day_state: !input time_of_day_state
+  enable_default_scene_on_transition: !input enable_default_scene_on_transition
+  
+  # Values
+  tod_state: "{{ states(time_of_day_state) }}"
+  tod_options: "{{ state_attr(time_of_day_state, 'options') or [] }}"
+  tod_index: "{{ tod_options.index(tod_state) if tod_state in tod_options else -1 }}"
+  control_on: "{{ states(control_switch) in ['on','true','1'] }}"
+  scenes_list: !input scenes
+  default_scene: !input default_scene
+
+action:
+  # Debug info (log if required)
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info"
+              message: >
+                tod_index = {{ tod_index }},
+                control_ok = {{ control_ok }}
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ tod_index == -1 }}"
+        sequence:
+            stop: "Scene index is invalid. Check your state-to-scene mapping"
+    default:
+        sequence:
+          - variables:
+              result_scene: >
+                {% if control_on %}
+                  {{ scenes_list[tod_index] }}
+                {% else %}
+                  {{ default_scene }}
+                {% endif %}
+                
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ enable_default_scene_on_transition and result_scene != default_scene }}"
+                sequence:
+                  - service: scene.turn_on
+                    target:
+                      entity_id: "{{ default_scene }}"             
+                
+          - service: scene.turn_on
+            target:
+              entity_id: "{{ result_scene }}"           
+          
+          
+

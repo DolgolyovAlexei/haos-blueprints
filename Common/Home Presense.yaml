@@ -1,0 +1,198 @@
+blueprint:
+  name: "Custom: Home Presence Controller"
+  description: "Allows to control time of day scenes"
+  domain: automation
+  input:
+    result_group:
+      name: Output
+      collapsed: false
+      input:
+        result_value_entity:
+          name: Result Value
+          description: Helper object that will contain result
+          selector:
+            entity:
+              domain: input_boolean
+              
+        control_switch:
+          name: Control Switch
+          description: Gatekeeper switch
+          selector:
+            entity:
+              domain: 
+                - input_boolean
+                - binary_sensor
+              
+    door_group:
+      name: Door
+      collapsed: false
+      input:
+        door_sensors:
+          name: Door Sensor(s)
+          description: Select the door sensor(s) to monitor
+          default: []
+          selector:
+            entity:
+              multiple: true
+              domain: 
+                - binary_sensor
+              device_class: door
+
+        door_sensor_threshold:
+          name: Door Sensor Duration Threshold
+          description: Select the door sensor threshold
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 600
+              unit_of_measurement: seconds
+              mode: slider
+
+    presense_group:
+      name: Presense
+      collapsed: false
+      input:
+        presence_sensors:
+          name: Presense Sensors
+          description: Select the presense sensors to monitor
+          default: []
+          selector:
+            entity:
+              domain: person
+              multiple: true
+            
+        motion_sensors:
+          name: Motion Sensors
+          description: Select the motion sensors to monitor
+          default: []
+          selector:
+            entity:
+              domain: binary_sensor
+              multiple: true  
+              
+    wifi_group:
+      name: Wi-Fi
+      collapsed: false
+      input:
+        wifi_id_sensors:
+          name: Wi-Fi ID Sensors
+          description: Select the sensors that reports Wi-Fi ID(s)
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              multiple: true 
+              
+        home_wifi_ids:
+          name: Home Wi-Fi ID(s)
+          description: Select the home Wi-Fi ID(s)
+          default: []
+          selector:
+            text:
+              multiple: true               
+
+mode: restart
+
+trigger:
+  # Door
+  - platform: state
+    entity_id: !input door_sensors
+    id: 'door_trigger'
+
+  # Presense
+  - platform: state
+    entity_id: !input presence_sensors
+    
+  # Motion
+  - platform: state
+    entity_id: !input motion_sensors    
+    
+  # Control switch
+  - platform: state
+    entity_id: !input control_switch  
+   
+  # Wi-Fi sensors
+  - platform: state
+    entity_id: !input wifi_id_sensors  
+        
+variables:
+  is_debug: false
+
+  wifi_id_sensors: !input wifi_id_sensors
+  home_wifi_ids: !input home_wifi_ids
+  control_switch: !input control_switch
+  result_value_entity: !input result_value_entity
+  motion_sensors: !input motion_sensors
+  presence_sensors: !input presence_sensors
+  door_sensors: !input door_sensors
+  door_sensor_threshold: !input door_sensor_threshold
+
+  door_on: >
+    {% set ns = namespace(items=[]) %}
+    {% for s in door_sensors %}
+      {% if states(s) not in ['unknown','unavailable'] and (now() - states[s].last_changed).total_seconds() < door_sensor_threshold %}
+        {% set ns.items = ns.items + [s] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.items | count > 0 }}
+
+  presence_on: >
+    {{ (presence_sensors | select('is_state', 'home') | list | length > 0) | bool
+       if presence_sensors | length > 0 else false }}
+
+  motion_on: >
+    {{ (motion_sensors | select('is_state', 'on') | list | length > 0) | bool 
+       if motion_sensors | length > 0 else false }}
+       
+  wifi_on: >
+    {{ expand(wifi_id_sensors)
+       | map(attribute='state')
+       | select('in', home_wifi_ids)
+       | list
+       | length > 0 }}
+       
+  in_on_except_door: "{{ (motion_on or presence_on or wifi_on) and is_state(control_switch, 'on') }}"
+  is_on: "{{ in_on_except_door or door_on }}"
+
+action:
+  # Debug info (log if required)
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info"
+              message: >
+                motion_on = {{ motion_on }},
+                door_on = {{ door_on }},
+                presence_on = {{ presence_on }},
+                wifi_on = {{ wifi_on }}
+
+  # Setup result value.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_on }}"
+        sequence:            
+          - service: input_boolean.turn_on
+            target:
+              entity_id: "{{ result_value_entity }}"
+    default:
+      - service: input_boolean.turn_off
+        target:
+          entity_id: "{{ result_value_entity }}"    
+    
+      
+  # If it was door sensor then wait and turn on default scene after delay. On restart it will be retriggered.
+  - condition: template
+    value_template: "{{ (not in_on_except_door) and trigger.id == 'door_trigger' }}"
+    
+  - delay:
+      seconds: "{{ door_sensor_threshold }}"
+      
+  - service: input_boolean.turn_off
+    target:
+      entity_id: "{{ result_value_entity }}"       

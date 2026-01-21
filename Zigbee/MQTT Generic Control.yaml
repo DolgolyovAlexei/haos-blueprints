@@ -1,0 +1,213 @@
+blueprint:
+  name: "Custom: MQTT Generic Control"
+  description: >
+    Triggered by MQTT messages. Supports up to 8 custom action IDs with optional callbacks.
+  domain: automation
+
+  input:
+    mqtt_group:
+      name: "MQTT"
+      collapsed: false
+      input:
+        mqtt_topic:
+          name: MQTT Topic 1
+          description: The MQTT topic to listen to
+          selector:
+            text: {}
+
+        mqtt_topic2:
+          name: MQTT Topic 2
+          description: The MQTT topic to listen to
+          default: 'fake'
+          selector:
+            text: {}
+            
+        mqtt_topic3:
+          name: MQTT Topic 3
+          description: The MQTT topic to listen to
+          default: 'fake'
+          selector:
+            text: {}
+            
+        mqtt_topic4:
+          name: MQTT Topic 4
+          description: The MQTT topic to listen to
+          default: 'fake'
+          selector:
+            text: {}
+            
+    actions_group:
+      name: "Actions"
+      collapsed: false
+      input:            
+        action_id_1:
+          name: Action ID 1
+          description: Value of `payload_json.action` that triggers callback 1
+          default: ""
+          selector:
+            text: {}
+        action_callback_1:
+          name: Action Callback 1
+          description: Actions to run when Action ID 1 is received
+          default: []
+          selector:
+            action: {}
+    
+        action_id_2:
+          name: Action ID 2
+          default: ""
+          selector:
+            text: {}
+        action_callback_2:
+          name: Action Callback 2
+          default: []
+          selector:
+            action: {}
+    
+        action_id_3:
+          name: Action ID 3
+          default: ""
+          selector:
+            text: {}
+        action_callback_3:
+          name: Action Callback 3
+          default: []
+          selector:
+            action: {}
+    
+        action_id_4:
+          name: Action ID 4
+          default: ""
+          selector:
+            text: {}
+        action_callback_4:
+          name: Action Callback 4
+          default: []
+          selector:
+            action: {}
+    
+        action_id_5:
+          name: Action ID 5
+          default: ""
+          selector:
+            text: {}
+        action_callback_5:
+          name: Action Callback 5
+          default: []
+          selector:
+            action: {}
+    
+        action_id_6:
+          name: Action ID 6
+          default: ""
+          selector:
+            text: {}
+        action_callback_6:
+          name: Action Callback 6
+          default: []
+          selector:
+            action: {}
+    
+        action_id_7:
+          name: Action ID 7
+          default: ""
+          selector:
+            text: {}
+        action_callback_7:
+          name: Action Callback 7
+          default: []
+          selector:
+            action: {}
+    
+        action_id_8:
+          name: Action ID 8
+          default: ""
+          selector:
+            text: {}
+        action_callback_8:
+          name: Action Callback 8
+          default: []
+          selector:
+            action: {}
+
+mode: restart
+
+trigger:
+  - platform: mqtt
+    topic: !input mqtt_topic
+  - platform: mqtt
+    topic: !input mqtt_topic2
+    enabled: "{{ mqtt_topic2 != '' }}"
+  - platform: mqtt
+    topic: !input mqtt_topic3
+    enabled: "{{ mqtt_topic3 != '' }}"
+  - platform: mqtt
+    topic: !input mqtt_topic4
+    enabled: "{{ mqtt_topic4 != '' }}"
+    
+variables:
+  action_id: "{{ trigger.payload_json.action }}"
+  action_id_1: !input action_id_1
+  action_id_2: !input action_id_2
+  action_id_3: !input action_id_3
+  action_id_4: !input action_id_4
+  action_id_5: !input action_id_5
+  action_id_6: !input action_id_6
+  action_id_7: !input action_id_7
+  action_id_8: !input action_id_8
+  is_debug: false
+
+action:
+  # Debug info (log if required)
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info"
+              message: >
+                action = {{ action_id }},
+                1 = {{ action_id_1 }}
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id_1 != '' and action_id == action_id_1 }}"
+        sequence: !input action_callback_1
+
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id_2 != '' and action_id == action_id_2 }}"
+        sequence: !input action_callback_2
+
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id_3 != '' and action_id == action_id_3 }}"
+        sequence: !input action_callback_3
+
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id_4 != '' and action_id == action_id_4 }}"
+        sequence: !input action_callback_4
+
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id_5 != '' and action_id == action_id_5 }}"
+        sequence: !input action_callback_5
+
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id_6 != '' and action_id == action_id_6 }}"
+        sequence: !input action_callback_6
+
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id_7 != '' and action_id == action_id_7 }}"
+        sequence: !input action_callback_7
+
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id_8 != '' and action_id == action_id_8 }}"
+        sequence: !input action_callback_8

@@ -1,0 +1,69 @@
+blueprint:
+  name: "Custom: MQTT Knob Media Controller (Dynamic Step)"
+  description: >
+    Control a media player using a knob switch via MQTT.
+    - `toggle` pauses/unpauses
+    - `rotate_left` decreases volume
+    - `rotate_right` increases volume
+    - Volume step is taken from `action_step` in the MQTT payload
+  domain: automation
+  input:
+    mqtt_topic:
+      name: MQTT Topic
+      description: The topic your knob publishes to (e.g., zigbee2mqtt/knob1/action)
+      selector:
+        text:
+    media_player:
+      name: Media Player
+      selector:
+        entity:
+          domain: media_player
+
+trigger:
+  - platform: mqtt
+    topic: !input mqtt_topic
+
+variables:
+  media: !input media_player
+  action: "{{ trigger.payload_json.action }}"
+  step: >-
+      {% set key = 'action_step_size' %}
+      {% if key in trigger.payload_json %}
+        {{ (trigger.payload_json[key] | float(0)) / 500 }}
+      {% else %}
+        0
+      {% endif %}
+
+action:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ action == 'toggle' }}"
+        sequence:
+          - service: media_player.media_play_pause
+            target:
+              entity_id: "{{ media }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ action == 'brightness_step_down' }}"
+        sequence:
+          - variables:
+              current: "{{ state_attr(media, 'volume_level') | float(0) }}"
+              new: "{{ [0, current - step] | max }}"
+          - service: media_player.volume_set
+            target:
+              entity_id: "{{ media }}"
+            data:
+              volume_level: "{{ new }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ action == 'brightness_step_up' }}"
+        sequence:
+          - variables:
+              current: "{{ state_attr(media, 'volume_level') | float(0) }}"
+              new: "{{ [current + step, 1] | min }}"
+          - service: media_player.volume_set
+            target:
+              entity_id: "{{ media }}"
+            data:
+              volume_level: "{{ new }}"

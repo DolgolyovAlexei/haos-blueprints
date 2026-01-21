@@ -1,0 +1,79 @@
+blueprint:
+  name: "Custom: Power Spike Tracker"
+  description: >
+    Monitors a list of power sensors and triggers when consumption spikes
+    beyond a defined ratio compared to the previous reading. Optionally
+    turns off the associated switch.
+  domain: automation
+  input:
+    power_sensors:
+      name: Power Sensors
+      description: 'List of power sensors to monitor. Switch entity ids will be calculated by replacing `sensor.` and `_power` substrings. I.e. for `sensor.my_switch_power` switch entity must be `switch.my_switch`.'
+      selector:
+        entity:
+          domain: sensor
+          multiple: true
+
+    spike_ratio:
+      name: Power Spike Ratio
+      description: Ratio threshold (e.g. 2.0 means power doubled)
+      default: 2.0
+      selector:
+        number:
+          min: 1.0
+          max: 10.0
+          step: 0.1
+          
+    threshold_value:
+      name: Minimum Power Threshold
+      description: Ignore spikes if current power is below this value
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 5000
+          step: 1
+          unit_of_measurement: "W"          
+          
+    auto_turn_off:
+      name: Auto Turn Off Switch
+      description: 'If true, turn off the switch linked to the sensor that spiked'
+      default: false
+      selector:
+        boolean:
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input power_sensors
+
+variables:
+  spike_ratio: !input spike_ratio
+  auto_turn_off: !input auto_turn_off
+  threshold_value: !input threshold_value 
+  entity: "{{ trigger.entity_id }}"
+  prev: "{{ trigger.from_state.state | float(0) }}"
+  curr: "{{ trigger.to_state.state | float(0) }}"
+  # Derive switch name if convention is consistent (sensor.<name>_power → switch.<name>)
+  switch_entity: >
+    {{ entity | regex_replace('^sensor\\.', 'switch.') | regex_replace('_power$', '') }}
+
+condition:
+  - condition: template
+    value_template: >
+      {{ curr > threshold_value and prev > 0 and (curr / prev) >= spike_ratio }}
+
+action:
+  - service: notify.notify
+    data:
+      message: >
+        Power spike detected on {{ entity }}:
+        {{ prev }}W → {{ curr }}W (ratio {{ (curr/prev) | round(2) }})
+
+  - choose:
+      - conditions: "{{ auto_turn_off }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: "{{ switch_entity }}"

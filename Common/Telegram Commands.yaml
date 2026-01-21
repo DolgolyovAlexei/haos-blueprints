@@ -1,0 +1,164 @@
+blueprint:
+  name: "Custom: Telegram Commands"
+  description: >
+    Sends a Telegram message with inline keyboard buttons to multiple chat IDs
+    when executed manually, and reacts to button presses by performing
+    the corresponding action (one per button).
+  domain: automation
+  input:
+    commands_group:
+      name: "Commands"
+      collapsed: false
+      input:      
+        commands:
+          name: Commands
+          description: List of commands
+          default: []
+          selector:
+            text:
+              multiple: true
+
+        answers:
+          name: Answers
+          description: List of answers (optional)
+          default: []
+          selector:
+            text:
+              multiple: true
+              
+    callbacks_group:
+      name: "Callbacks"
+      collapsed: false
+      input:       
+        button_1_callback:
+          name: Button 1 Callback
+          default: []
+          selector:
+            action: {} 
+            
+        button_2_callback:
+          name: Button 2 Callback
+          default: []
+          selector:
+            action: {}  
+            
+        button_3_callback:
+          name: Button 3 Callback
+          default: []
+          selector:
+            action: {}  
+            
+        button_4_callback:
+          name: Button 4 Callback
+          default: []
+          selector:
+            action: {}      
+            
+        button_5_callback:
+          name: Button 5 Callback
+          default: []
+          selector:
+            action: {}  
+            
+        button_6_callback:
+          name: Button 6 Callback
+          default: []
+          selector:
+            action: {}  
+            
+        button_7_callback:
+          name: Button 7 Callback
+          default: []
+          selector:
+            action: {}  
+            
+        button_8_callback:
+          name: Button 8 Callback
+          default: []
+          selector:
+            action: {}  
+            
+mode: parallel
+
+variables:
+  commands: !input commands 
+  answers: !input answers
+  
+  is_debug: false
+  command: "{{ trigger.event.data.command }}"
+  chat_id: "{{ trigger.event.data.chat_id }}"     
+  
+trigger:
+  - platform: event
+    event_type: telegram_command
+       
+action:
+  - variables:
+      command_index: >
+        {% set res = -1 %}
+        {% if (commands | length >= 1 and command == commands[0] and button_1_callback != []) %}
+          {% set res = 0 %}
+        {% elif (commands | length >= 2 and command == commands[1] and button_2_callback != []) %}
+          {% set res = 1 %}            
+        {% elif (commands | length >= 3 and command == commands[2] and button_3_callback != []) %}
+          {% set res = 2 %}       
+        {% elif (commands | length >= 4 and command == commands[3] and button_4_callback != []) %}
+          {% set res = 3 %}                     
+        {% elif (commands | length >= 5 and command == commands[4] and button_5_callback != []) %}
+          {% set res = 4 %}                     
+        {% elif (commands | length >= 6 and command == commands[5] and button_6_callback != []) %}
+          {% set res = 5 %}    
+        {% elif (commands | length >= 7 and command == commands[6] and button_7_callback != []) %}
+          {% set res = 6 %}       
+        {% elif (commands | length >= 8 and command == commands[7] and button_8_callback != []) %}
+          {% set res = 7 %}  
+        {% endif %}
+        {{ res }}
+  - choose:
+      - conditions: "{{ command_index == 0 }}"
+        sequence: !input button_1_callback
+      - conditions: "{{ command_index == 1 }}"
+        sequence: !input button_2_callback  
+      - conditions: "{{ command_index == 2 }}"
+        sequence: !input button_3_callback
+      - conditions: "{{ command_index == 3 }}"
+        sequence: !input button_4_callback  
+      - conditions: "{{ command_index == 4 }}"
+        sequence: !input button_5_callback
+      - conditions: "{{ command_index == 5 }}"
+        sequence: !input button_6_callback  
+      - conditions: "{{ command_index == 6 }}"
+        sequence: !input button_7_callback
+      - conditions: "{{ command_index == 7 }}"
+        sequence: !input button_8_callback     
+
+  - variables:
+      message: >
+        {% if command_index == -1 or answers | length <= command_index %}
+        {% else %}
+          {{ answers[command_index] }}
+        {% endif %}
+
+  # Debug info (log if required)
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info (Telegram Commands)"
+              message: >
+                command_index = {{ command_index }},
+                commands = {{ commands }},
+                answers = {{ answers }},
+                message = {{ message }}
+
+  - choose:
+      - conditions: "{{ message != '' }}"
+        sequence:
+        - service: telegram_bot.send_message
+          data:
+            target: "{{ chat_id }}"
+            message: "{{ message }}"            
+     

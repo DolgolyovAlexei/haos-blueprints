@@ -1,0 +1,594 @@
+blueprint:
+  name: "Custom: Motion Light"
+  description: >
+    Smart motion sensor automation blueprint. 
+    Note: by default will not run if light was already ON. If light was turned ON during automation running the automation will enter manual state and will not triiger untill the light will be turned off.
+    Note:
+    - Not tested when motion sensors and state sensors are used at the same time.
+  domain: automation
+
+  input:
+    controls:
+      name: "Controls"
+      collapsed: false
+      input:
+        motion_sensors:
+          name: Motion sensors
+          description: Select one or more motion sensors. Light is ON if any of the objects is ON.
+          default: []
+          selector:
+            entity:
+              domain: 
+                - binary_sensor
+                - switch
+                - group
+                - light
+                - binary_sensor
+              multiple: true
+
+        condition_switches:
+          name: Condition switches
+          description: >
+            Automation will not trigger if any of switches is off
+          default: []
+          selector:
+            entity:
+              domain:
+                - input_boolean
+                - switch
+                - group
+                - light
+                - binary_sensor
+              multiple: true
+
+    devices_group:
+      name: "Devices"
+      collapsed: false
+      input:
+        target_light:
+          name: Target Light (optional)
+          description: "Light to control. Setup no light or single light."
+          default: []
+          selector:
+            entity:
+              domain: light
+              multiple: true
+              
+        target_light_data:
+          name: Light Data Dictionary (optional)
+          default: ""
+          description: >
+            Provide a YAML dictionary of light.turn_on parameters. If parameter not specified then last set if taken.
+            Example:
+              brightness: 200
+              color_temp: 350
+              rgb_color: [255, 0, 0]
+              effect: rainbow
+          selector:
+            object: {}
+            
+        brightness_threshold:
+          name: Brightness Threshold
+          description: 'Will trigger automation only if brightness of enabled light is lower then the threshold value'
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 255
+              step: 1   
+  
+        target_switch:
+          name: Target Switch (optional)
+          description: "Switch to control. Setup no switch or single switch."
+          default: []
+          selector:
+            entity:
+              domain: switch
+              multiple: true 
+              
+        timeout_delay:
+          name: Timeout delay (seconds)
+          description: Optional delay for motion sensors before turning off the light after all motion sensors are OFF
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 3600
+              step: 1
+              unit_of_measurement: seconds              
+              
+    persistent_state:
+      name: "Persistent State"
+      collapsed: true
+      input:
+        automation_state_entity:
+          name: Automation state entity
+          description: "`input_text` that stores the light automation state in JSON format. `Doesn't require specific initial state, values of the entity can be empty. For now each automation must have it's personal entity.`"
+          selector:
+            entity:
+              domain: input_text
+              
+        automation_state_placeholder_key:
+          name: Automation state placeholder key
+          description: Overrides key for persistent storage if not empty. By default uses identifier of target light, otherwise uses constant. `Don't override it if you don't understand the meaning`
+          default: ''
+          selector:
+            text:                 
+              
+    luminance:
+      name: "Luminance"
+      collapsed: true
+      input:
+        luminance_sensor:
+          name: Luminance sensor (optional)
+          description: Sensor reporting ambient light level (lux)
+          default: null
+          selector:
+            entity:
+              domain: sensor
+
+        luminance_threshold:
+          name: Luminance threshold (optional)
+          description: Light will only turn on if sensor value is below this threshold
+          default: 100
+          selector:
+            number:
+              min: 0
+              max: 10000
+              step: 1
+              unit_of_measurement: "lux"
+
+        luminance_enable_switch:
+          name: Luminance control enable switch (optional)
+          description: Switch or input_boolean to enable/disable luminance control
+          default: null
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+
+    actions:
+      name: "Actions"
+      collapsed: true
+      input:
+        user_condition:
+          name: Condition block
+          description: Optional condition(s) that must pass for actions to run
+          default: []
+          selector:
+            condition: {}
+    
+        enable_action:
+          name: Enable callback action (optional)
+          description: Runs when light is turned on
+          default: []
+          selector:
+            action: {}
+    
+        disable_action:
+          name: Disable callback action (optional)
+          description: Runs when light is turned off
+          default: []
+          selector:
+            action: {}
+            
+        manual_action_runs_disable_action:
+          name: Manual also runs disable action
+          description: >
+            If checked, executing `Manual Action` will combine it with `Disable Action`.
+          default: false
+          selector:
+            boolean: {}
+            
+        manual_action:
+          name: Manual callback action (optional)
+          description: > 
+            Runs when light state is changed during automation running. 
+            Works only in case if `Automation state entity` is set.
+          default: []
+          selector:
+            action: {}
+
+mode: restart
+
+trigger:
+  # Motion sensors ON/OFF
+  - platform: state
+    entity_id: !input motion_sensors
+    id: "motion_sensor"
+
+  # Condition switches ON/OFF
+  - platform: state
+    entity_id: !input condition_switches    
+    
+  # Light ON/OFF
+  - platform: state
+    entity_id: !input target_light
+    id: "light_state_changed"
+    
+  # Switches ON/OFF
+  - platform: state
+    entity_id: !input target_switch
+    id: "switch_state_changed"    
+    
+  # Luminance sensor ON/OFF
+  - platform: template
+    value_template: >
+      {% if luminance_sensor %}
+        {{ states(luminance_sensor) not in ['unknown','unavailable'] }}
+      {% else %}
+        false
+      {% endif %}
+  - platform: template
+    value_template: >
+      {% if luminance_enable_switch %}
+        {{ states(luminance_enable_switch) not in ['unknown','unavailable'] }}
+      {% else %}
+        false
+      {% endif %}
+
+condition: !input user_condition
+
+# TOFIX:
+# - state_sensors
+# - might be problems with storing persistent state
+
+variables:
+
+  # Constants
+  is_debug: false
+  is_base_debug: false
+  
+  # JSON state constants
+  automation_state_invalid: '-1'
+  automation_state_none: '0'
+  automation_state_enabled: '1'
+  automation_state_enabling: '2'
+  automation_state_manual: '3'
+  state_motion_light_state: 'mls'
+  state_motion_light_last_action_timestamp: 'mllat' 
+  state_motion_light_last_brightness: 'mllb' 
+  date_time_now: "{{ now() }}"
+  trigger_id: "{{ trigger.id }}"
+  
+  # Defines
+  sensors: !input motion_sensors
+  condition_switches: !input condition_switches
+  timeout: !input timeout_delay
+  brightness_threshold: !input brightness_threshold
+  
+  # Light
+  light_entities: !input target_light
+  light_entity: "{{ light_entities[0] if light_entities | length != 0 else none }}"
+  
+  # Switch
+  switch_entities: !input target_switch
+  switch_entity: "{{ switch_entities[0] if switch_entities | length != 0 else none }}"
+  
+  # JSON global state.
+  automation_state_entity: !input automation_state_entity
+  automation_state_global: >
+    {% set text = states(automation_state_entity) | string %}
+    {% if text in ['unknown','unavailable','none',''] %}
+      {{ dict() }}
+    {% else %}
+      {{ text | from_json }}
+    {% endif %}
+  automation_state_placeholder_key: !input automation_state_placeholder_key
+  automation_state_key: >
+    {% if automation_state_placeholder_key != '' %}
+      {{ automation_state_placeholder_key }}
+    {% elif switch_entity is not none %}
+      {{ switch_entity }}
+    {% elif light_entity is not none %}
+      {{ light_entity }}
+    {% else %}
+      'default_motion_light_placeholder'
+    {% endif %}
+  automation_state: "{{ automation_state_global.get(automation_state_key, dict()) if light_entity != '' else dict() }}"
+  motion_light_state: "{{ automation_state.get(state_motion_light_state, automation_state_none) }}"
+  motion_light_last_action_timestamp: >
+    {% if trigger_id == 'state_motion' %}
+      {{ date_time_now }}
+    {% else %}
+      {{ (automation_state.get(state_motion_light_last_action_timestamp, none)) }}
+    {% endif %}
+  state_is_none: "{{ ((motion_light_state | string) == automation_state_none) }}"
+  state_is_enabled: "{{ (motion_light_state | string) == automation_state_enabled }}"
+  state_is_enabling: "{{ (motion_light_state | string) == automation_state_enabling }}"
+  state_is_manual: "{{ (motion_light_state | string) == automation_state_manual }}"
+
+  # Actions
+  manual_action: !input manual_action
+  disable_action: !input disable_action
+  enable_action: !input enable_action
+  manual_action_runs_disable_action: !input manual_action_runs_disable_action
+  light_data: !input target_light_data
+
+  # Luminance
+  luminance_sensor: !input luminance_sensor
+  luminance_threshold: !input luminance_threshold
+  luminance_enable_switch: !input luminance_enable_switch
+  luminance_ok: >
+    {% if luminance_sensor is not none and luminance_threshold is not none %}
+      {% set val = states(luminance_sensor) | float(0) %}
+      {% set enabled = true %}
+      {% if luminance_enable_switch %}
+        {% set enabled = is_state(luminance_enable_switch, 'on') %}
+      {% endif %}
+      {{ enabled and val < luminance_threshold }}
+    {% else %}
+      true
+    {% endif %}
+    
+  # Trigger details
+  all_of_condition_switches_on: >
+    {% set e = condition_switches if condition_switches is iterable else [condition_switches] %}
+    {{ (e | select('is_state', 'on') | list | length) == condition_switches | length }}    
+  count_of_enabled_sensor: >
+    {% set e = sensors if sensors is iterable else [sensors] %}
+    {{ e | select('is_state', 'on') | list | length }}
+  motion_on: "{{ count_of_enabled_sensor > 0 }}"
+  motion_all_off: "{{ count_of_enabled_sensor == 0 }}"
+  must_be_enabled_preview: >
+    {{ (all_of_condition_switches_on and luminance_ok and motion_on) | bool }}
+  must_be_enabled_guard: "{{ state_is_none }}"
+  must_be_enabled: >
+    {{ must_be_enabled_preview and must_be_enabled_guard }}
+    
+  must_be_disabled_preview: >
+    {{ ((not all_of_condition_switches_on) or motion_all_off) | bool }}
+  must_be_disabled_guard: "{{ state_is_enabled }}"
+  must_be_disabled: >
+    {{ must_be_disabled_preview and must_be_disabled_guard }}
+    
+action:
+  # Debug info.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_base_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info"
+              message: >
+                must_be_enabled_preview: {{ must_be_enabled_preview }},
+                must_be_disabled_preview: {{ must_be_disabled_preview }},
+                must_be_disabled: {{ must_be_disabled }},
+                must_be_disabled_guard: {{ must_be_disabled_guard }},
+                id: {{ trigger.id }}
+                
+  # Guard for 1 light.              
+  - choose:
+        conditions:
+          - condition: template
+            value_template: "{{ light_entities | length > 1}}"
+        sequence:
+            stop: "Only one light is supported currently"
+             
+  # Guard for 1 switch.              
+  - choose:
+        conditions:
+          - condition: template
+            value_template: "{{ switch_entities | length > 1}}"
+        sequence:
+            stop: "Only one switch is supported currently"
+                
+  - choose:
+        # Disable automation flag if light was changed during automation
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger_id == 'light_state_changed' or trigger_id == 'switch_state_changed' }}"
+        sequence:
+          - choose:
+              # Disable state if light was turned OFF (no matter how)
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {% set res = false %}
+                      {% if light_entity is not none %}
+                        {% set brightness = state_attr(light_entity, 'brightness') %}
+                        {% set res = res and (is_state(light_entity, 'off') or brightness | int < brightness_threshold) %}
+                      {% endif %}
+                      {% if switch_entity is not none %}
+                        {% set res = res and is_state(switch_entity, 'off') %}
+                      {% endif %}
+                      {{ res }}
+                      
+                sequence:
+                  - service: input_text.set_value
+                    target:
+                      entity_id: "{{ automation_state_entity }}"
+                    data:
+                      value: >
+                        {% set new_automation_state = (automation_state | combine({ state_motion_light_state: automation_state_none })) %}
+                        {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}  
+                      
+              # This call goes DIRECTLY from the automation
+              - conditions:
+                  - condition: template
+                    value_template: "{{ state_is_enabling }}"
+                sequence:
+                  - service: input_text.set_value
+                    target:
+                      entity_id: "{{ automation_state_entity }}"
+                    data: 
+                      value: >
+                        {% set new_automation_state = (automation_state | combine({ state_motion_light_state: automation_state_enabled })) %}
+                        {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                  
+                  
+              # If the control was taken by the user
+              - conditions:
+                  - condition: template
+                    value_template: "{{ state_is_enabled }}"
+                sequence:
+                  - service: input_text.set_value
+                    target:
+                      entity_id: "{{ automation_state_entity }}"
+                    data: >
+                        {% set new_automation_state = (automation_state | combine({ state_motion_light_state: automation_state_manual })) %}
+                        {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                
+             
+                  # Call disable action if required
+                  - choose:
+                      - conditions: "{{ manual_action_runs_disable_action and disable_action != [] }}"
+                        sequence: !input disable_action
+                        
+                  # Call manual action
+                  - choose:
+                      - conditions: "{{ manual_action != [] }}"
+                        sequence: !input manual_action
+                      
+      # Enable path
+      - conditions:
+          - condition: template
+            value_template: "{{ must_be_enabled }}"
+        sequence:
+          - choose:
+              # Guard: stop if light already ON and automation_flag exists
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {% set res = false %}
+                      {% if light_entity is not none %}
+                        {% set res = res or ((is_state(light_entity, 'on') or state_attr(light_entity, 'brightness') | int > brightness_threshold)) %}
+                      {% endif %}
+                      {% if switch_entity is not none %}
+                        {% set res = res or is_state(switch_entity, 'on') %}
+                      {% endif %}
+                      {{ res }}
+                sequence:
+                  - stop: "Light is already ON when sensors were triggered"
+                  
+            # Enable the light      
+            default:
+            
+              # Debug info.
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_debug }}"
+                    sequence:
+                      - service: persistent_notification.create
+                        data:
+                          title: "Debug Info (Must Be Enabled)"
+                          message: >
+                            Enabled. light_entity: {{ light_entity }}         
+
+              - variables:
+                  last_brightness: >
+                    {% if (light_entity is none) or is_state(light_entity, 'off') %}
+                      0
+                    {% else %}
+                      {{ state_attr(light_entity, 'brightness') }}
+                    {% endif %}
+            
+              # Turn ON the light
+              - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ light_entity is not none }}"
+                  sequence:                       
+                    - service: light.turn_on
+                      target:
+                        entity_id: "{{ light_entity }}"
+                      data: "{{ light_data }}"
+                      
+              # Enable the switch.    
+              - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ switch_entity is not none }}"
+                  sequence:                       
+                    - service: switch.turn_on
+                      target:
+                        entity_id: "{{ switch_entity }}"                       
+                
+              - service: input_text.set_value
+                target:
+                  entity_id: "{{ automation_state_entity }}"
+                data: 
+                  value: >
+                    {% set new_automation_state = (automation_state | combine({ state_motion_light_state: automation_state_enabling, state_motion_light_last_action_timestamp: date_time_now, state_motion_light_last_brightness: last_brightness })) %}
+                    {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }} 
+                          
+              # Enable action    
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ enable_action != [] }}"
+                    sequence: !input enable_action
+                    
+      # Disable path
+      - conditions:
+          - condition: template
+            value_template: "{{ must_be_disabled }}"
+        sequence:
+        
+          # Debug info.
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (Must Be Disabled)"
+                      message: >
+                        Disabled. light_entity: {{ light_entity }} 
+        
+          - delay:
+              seconds: "{{ timeout }}"
+  
+          # Disable the light.    
+          - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ light_entity is not none }}"
+              sequence:
+              
+                - variables:
+                    last_brightness: "{{ automation_state.get(state_motion_light_last_brightness, 0) }}"
+              
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ last_brightness > 0 }}"       
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: "{{ light_entity }}"      
+                          data:
+                            brightness: "{{ last_brightness }}"
+                      
+                  default:
+                    - service: light.turn_off
+                      target:
+                        entity_id: "{{ light_entity }}"  
+                    
+          # Disable the switch.    
+          - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ switch_entity is not none }}"
+              sequence:                       
+                - service: switch.turn_off
+                  target:
+                    entity_id: "{{ switch_entity }}"       
+                    
+          # Modify automation entity.
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({ state_motion_light_state: automation_state_none })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+                
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ disable_action != [] }}"
+                sequence: !input disable_action

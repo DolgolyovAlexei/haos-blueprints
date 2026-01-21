@@ -1,0 +1,32 @@
+blueprint:
+  name: MQTT Multi-Topic Listener
+  domain: automation
+  input:
+    mqtt_topics:
+      name: MQTT Topics
+      description: List of topics to react to
+      selector:
+        text:
+          multiple: true
+      default: []
+
+trigger:
+  - platform: mqtt
+    topic: "#"
+
+action:
+  - variables:
+      mqtt_topics: !input mqtt_topics
+      received_topic: "{{ trigger.topic }}"
+      received_payload: "{{ trigger.payload }}"
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ received_topic in mqtt_topics }}
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info"
+              message: >
+                {{ trigger.topic }}

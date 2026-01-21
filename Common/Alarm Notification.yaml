@@ -1,0 +1,220 @@
+blueprint:
+  name: "Custom: Multi-Sensor Alarm & Notification"
+  description: >
+    Triggers notifications and alarm actions when any of the configured binary sensors
+    change to "on". Supports per-sensor notification texts, optional alarm switch,
+    melody and volume selectors.
+  domain: automation
+  input:
+    devices:
+      name: "Devices"
+      collapsed: false
+      input:
+        binary_sensors:
+          name: Binary Sensors
+          description: List of sensors to monitor
+          selector:
+            entity:
+              domain: 
+                - binary_sensor
+                - input_boolean
+              multiple: true
+              
+        binary_sensors_decay_duration:
+          name: Binary Sensors Decay Duration (seconds)
+          description: Minimum time a sensor must stay ON before considered active
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 30
+              unit_of_measurement: "s"              
+              
+    notification:
+      name: "Notification"
+      collapsed: false
+      input:
+        notify_target:
+          name: Notification Target (optional)
+          description: Device or service to send notifications
+          default: null
+          selector:
+            entity:
+              domain: notify
+    
+        notify_texts:
+          name: Notification Texts
+          description: One line per binary sensor, aligned with sensor list
+          default: []
+          selector:
+            text:
+              multiple: true
+              
+    alarm_group:
+      name: "Alarm"
+      collapsed: false
+      input:    
+        alarm_switch:
+          name: Alarm Switch (optional)
+          description: Switch entity to toggle alarm device
+          default: null
+          selector:
+            entity:
+              domain: switch
+    
+        melody_id:
+          name: Melody Identifier
+          description: Static melody identifier string
+          default: ""
+          selector:
+            text:
+    
+        melody_select:
+          name: Melody Selector (optional)
+          description: Input select entity pointing to melody list
+          default: ""
+          selector:
+            entity:
+              domain: 
+                - input_select
+                - select
+    
+    
+        volume_id:
+          name: Volume Identifier
+          description: Static volume identifier string
+          default: ""
+          selector:
+            text:
+    
+        volume_select:
+          name: Volume Selector (optional)
+          description: Input select entity pointing to volume list
+          default: ""
+          selector:
+            entity:
+              domain: 
+                - input_select
+                - select
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input binary_sensors
+    to: "on"
+    for:
+      seconds: !input binary_sensors_decay_duration
+      
+  - platform: state
+    entity_id: !input binary_sensors
+    to: "off"
+      
+action:
+  - variables:
+      binary_sensors: !input binary_sensors
+      notify_target: !input notify_target
+      melody_select: !input melody_select
+      volume_select: !input volume_select
+      alarm_switch: !input alarm_switch
+      
+      enabled_sensors: "{{ binary_sensors | list | select('is_state','on') | list }}"
+      is_any_sensor_on: "{{ enabled_sensors | length != 0 }}"
+      are_all_sensors_off: "{{ enabled_sensors | length == 0 }}"
+      
+      delay_between_setters_in_ms: 100
+
+      is_debug: false
+  
+  # Debug info (log if required)
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info"
+              message: >
+                binary_sensors = {{ binary_sensors }},
+                enabled_sensors = {{ enabled_sensors }}
+      
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_any_sensor_on and notify_target is not none }}"
+        sequence:
+          - variables:
+              notify_texts: !input notify_texts
+              messages: "{{ notify_texts | list }}"
+              sensor: "{{ trigger.entity_id }}"
+              idx: "{{ (binary_sensors | list).index(sensor) }}"
+              message: >
+                {% if messages | length > idx %}
+                  {{ messages[idx] }}
+                {% else %}
+                  Sensor {{ sensor }} triggered
+                {% endif %}          
+             
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: "{{ message }}"
+
+  - choose:
+      - conditions: 
+          - condition: template
+            value_template: "{{ alarm_switch is not none }}"
+        sequence:
+          - variables:
+              melody_select: !input melody_select
+              melody_id: !input melody_id
+              
+              volume_select: !input volume_select
+              volume_id: !input volume_id
+              
+          - choose:
+              - conditions: 
+                  - condition: template
+                    value_template: "{{ melody_select is not none }}"            
+                sequence:
+                  - service: select.select_option
+                    target:
+                      entity_id: !input melody_select
+                    data:
+                      option: !input melody_id
+                  - delay:
+                      milliseconds: "{{ delay_between_setters_in_ms }}"  
+        
+          - choose:
+              - conditions: 
+                  - condition: template
+                    value_template: "{{ volume_select is not none }}"              
+                sequence:
+                  - service: select.select_option
+                    target:
+                      entity_id: !input volume_select
+                    data:
+                      option: !input volume_id        
+                  - delay:
+                      milliseconds: "{{ delay_between_setters_in_ms }}"
+                      
+          - choose:
+              - conditions: 
+                  - condition: template
+                    value_template: "{{ is_any_sensor_on }}"           
+                sequence:
+                  - service: switch.turn_on
+                    target:
+                      entity_id: !input alarm_switch
+                      
+              - conditions: 
+                  - condition: template
+                    value_template: "{{ are_all_sensors_off }}"       
+                sequence:
+                  - service: switch.turn_off
+                    target:
+                      entity_id: !input alarm_switch
+                      
+

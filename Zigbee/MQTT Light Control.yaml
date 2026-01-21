@@ -1,0 +1,2276 @@
+blueprint:
+  name: "Custom: MQTT Light Control"
+  description: Extended light control blueprint using MQTT device(s)
+  domain: automation
+  input:
+    Devices:
+      name: "Devices"
+      collapsed: false
+      input:
+        mqtt_topic:
+          name: MQTT Topic 1
+          description: The MQTT topic of the Zigbee device (e.g., zigbee2mqtt/my_controller_1)
+          selector:
+            text:
+        mqtt_topic2:
+          name: MQTT Topic 2
+          description: The MQTT topic of the Zigbee device (e.g., zigbee2mqtt/my_controller_2)
+          default: 'fake'
+          selector:
+            text:
+        mqtt_topic3:
+          name: MQTT Topic 3
+          description: The MQTT topic of the Zigbee device (e.g., zigbee2mqtt/my_controller_3)
+          default: 'fake'
+          selector:
+            text:
+        mqtt_topic4:
+          name: MQTT Topic 4
+          description: The MQTT topic of the Zigbee device (e.g., zigbee2mqtt/my_controller_4)
+          default: 'fake'
+          selector:
+            text:
+            
+    PersistentState:
+      name: "Persistent State"
+      collapsed: false
+      input:
+        automation_state_entity:
+          name: Automation state entity
+          description: The `input_text` entity will be used to store state of the automation in JSON format. Required for brightness list/brightness direction/color temp list functionality. `Doesn't require any initial state. For now each automation must have it's personal entity.`
+          default: null
+          selector:
+            entity:
+              domain:
+                - input_text  
+                
+        automation_state_key_override:
+          name: Automation state key override
+          description: If specified use this key as JSON key for persistent state structure. By default uses ID will be resolved automatically using light ids. `Don't use it if you don't understand it's meaning`.
+          default: ''
+          selector:
+            text:
+           
+    Light:
+      name: "Target Lights"
+      collapsed: false
+      description: Allows to specify lights to be controlled. All of the options can be used simultaniously.
+      input:
+        target_lights:
+          name: Target Light (optional)
+          description: The lights to be controlled directly
+          default: []
+          selector:
+            entity:
+              domain: 
+                - light
+                - switch
+              multiple: true
+        
+        target_lights_helper:
+          name: Target Lights Helper (optional)
+          description: Input helper (e.g., input_text) containing the light entity ID.
+          default: ""
+          selector:
+            entity:
+              domain:
+                - input_text
+              multiple: true
+      
+    Alternative_Light:
+      name: "Alternative Lights"
+      collapsed: false
+      description: Allows to specify alternative lights to be controlled. All of the options can be used simultaniously.
+      input:
+        alternative_light_1:
+          name: Alternative Light 1 (optional)
+          description: Light to be toggled using `Turn Off` button when all primary lights are turned off. `Turn On` and `Turn On All` action ids must be different. All other actions (like brightness/temperature/color control will be supported).
+          default: null
+          selector:
+            entity:
+              domain: 
+                - light
+                - switch
+              
+        alternative_light_1_toggle_callback:
+          name: Alternative Light 1 Toggle Callback
+          description: "Callback action triggered on alternative light 1 toggle"
+          default: []
+          selector:
+            action: {}            
+              
+        alternative_light_2:
+          name: Alternative Light 2 (optional)
+          description: Light to be toggled using `Turn Off All` button when all primary lights are turned off. `Turn Off` and `Turn Off All` action ids must be different. All other actions (like brightness/temperature/color control will be supported).
+          default: null
+          selector:
+            entity:
+              domain: 
+                - light
+                - switch
+              
+        alternative_light_2_toggle_callback:
+          name: Alternative Light 2 Toggle Callback
+          description: "Callback action triggered on alternative light 2 toggle"
+          default: []
+          selector:
+            action: {}                  
+              
+    Sychronization_Group:
+      name: "Synchronization"
+      collapsed: true
+      input:    
+        best_source_light_for_options:
+          name: Best source light for options (optional)
+          description: Light that will be used as options source (only if light is enabled at action time). By default will use the last resolved enabled light.
+          default: null
+          selector:
+            entity:
+              domain: light
+              multiple: false      
+      
+        apply_common_options_to_newly_enabled_light:
+            name: Apply common options to newly enabled light
+            description: If ON then newly enabled light will reference options from the last enabled light or best source light (if specified).
+            default: true
+            selector:
+              boolean: {}
+              
+    ActionStep_Group:
+      name: "Action Step"
+      collapsed: true
+      input:
+        action_step_payload_key:
+          name: Action Step Payload Key (optional)
+          description: A key used to extract step size from MQTT json action payload
+          default: action_step_size
+          selector:
+            text:
+      
+        action_step_entity:
+          name: Action Step Entity (optional)
+          description: A sensor entity that defines the brightness/color temperature/hue step (i.e. action from device)
+          default: null
+          selector:
+            entity:
+              domain: 
+                - sensor
+                - input_number
+                
+        action_step_fallback:
+          name: Action Step Fallback (optional)
+          description: A value that will be used in case if action step is not resolved or is zero.
+          default: 51
+          selector:
+            number:
+              min: 0
+              max: 255
+              step: 1
+              unit_of_measurement: "level"            
+                
+    Action_Group_TurnOn:
+      name: "Actions: Turn On"
+      collapsed: true
+      input:
+        action_turn_on:
+          name: Turn On Action ID
+          description: Action ID for sequencial turn on. Can be equal to any of turn off actions ids, so the action will only trigger if light is OFF.
+          default: 'on'
+          selector:
+            text:      
+            
+        action_turn_on_callback:
+          name: Callback
+          description: "Callback action triggered on common turn on event"
+          default: []
+          selector:
+            action: {}
+ 
+    Action_Group_TurnOnRepeat:
+      name: "Actions: Repeat Turn On"
+      collapsed: true
+      input:
+        action_for_repeated_turn_on:
+          name: Repeat Turn On Action ID
+          description: If specified will public MQTT message with the other action identifier.
+          default: repeat_on
+          selector:
+            text:  
+            
+        action_repeat_turn_on_callback:
+          name: Repeat Callback
+          description: "Repeat callback action called if `Turn On Action` arrives when all the lights are already on."
+          default: []
+          selector:
+            action: {}    
+ 
+    Action_Group_TurnOnAll:
+      name: "Actions: Turn On All"
+      collapsed: true
+      input:
+        action_turn_on_all:
+          name: Turn On All Action ID
+          description: Action ID for all lights turn on. Can be equal to any of turn off actions ids, so the action will only trigger if light is OFF.
+          default: on_all
+          selector:
+            text:         
+
+        action_turn_on_all_callback:
+          name: Callback
+          description: "Callback action"
+          default: []
+          selector:
+            action: {}
+            
+    Action_Group_TurnOnAllRepeat:
+      name: "Actions: Repeat Turn On All"
+      collapsed: true
+      input:
+        action_for_repeated_turn_on_all:
+          name: Repeat Turn On All Action ID
+          description: If specified will public MQTT message with the other action identifier.
+          default: repeat_on_all
+          selector:
+            text:  
+            
+        action_repeat_turn_on_all_callback:
+          name: Repeat Callback
+          description: "Repeat callback action called if `Turn On All Action` arrives when all the lights are already on."
+          default: []
+          selector:
+            action: {}                
+            
+    Action_Group_TurnOff:
+      name: "Actions: Turn Off"
+      collapsed: true
+      input:
+        action_turn_off:
+          name: Turn Off Action ID
+          description: Action ID for sequencial turn off. Can be equal to any of turn on actions ids, so the action will only trigger if at least one of the provided lights is ON.
+          default: off
+          selector:
+            text:
+            
+        action_turn_off_callback:
+          name: Callback
+          description: "Callback action triggered on common turn off event"
+          default: []
+          selector:
+            action: {}
+
+    Action_Group_TurnOffAll:
+      name: "Actions: Turn Off All"
+      collapsed: true
+      input:
+        action_turn_off_all:
+          name: Turn Off All Action ID
+          description: Action ID for all light turn off. Can be equal to any of turn on actions ids, so the action will only trigger if at least one of the provided lights is ON.
+          default: off_all
+          selector:
+            text:      
+      
+        action_turn_off_all_callback:
+          name: Callback
+          description: "Callback action triggered on common turn off event"
+          default: []
+          selector:
+            action: {}        
+
+    Action_Group_TurnOffRepeat:
+      name: "Actions: Turn Off Repeat"
+      collapsed: true
+      input:
+        action_repeat_turn_off_callback:
+          name: Repeat Callback
+          description: "Repeat callback action called if `Turn Off Action` arrives when all the lights are already off."
+          default: []
+          selector:
+            action: {}
+            
+    Action_Group_TurnOffAllRepeat:
+      name: "Actions: Turn Off All Repeat"
+      collapsed: true
+      input:
+        action_repeat_turn_off_all_callback:
+          name: Repeat Callback
+          description: "Repeat callback action called if `Turn Off All Action` arrives when all the lights are already off."
+          default: []
+          selector:
+            action: {}            
+   
+    Group_Brightness:
+      name: "Brightness"
+      collapsed: true
+      input:
+        min_brightness:
+          name: Minimum Brightness
+          description: A number that specifies minumum brightness
+          default: 5
+          selector:
+            number:
+              min: 1
+              max: 255
+              step: 1
+              unit_of_measurement: "level"
+
+        max_brightness:
+          name: Maximum Brightness
+          description: A number that specifies maximum brightness
+          default: 255
+          selector:
+            number:
+              min: 1
+              max: 255
+              step: 1
+              unit_of_measurement: "level"
+              
+        set_max_brightness_on_turn_on:
+          name: Set max brightness on turn on
+          description: "Check if max brightness should be set on the light turn on"
+          default: false
+          selector:
+            boolean:                  
+      
+    Action_Group_Brightness_Increment:
+      name: "Actions: Brightness Increment"
+      collapsed: true
+      input:
+        action_brightness_decrease:
+          name: Brightness Decrease Action ID
+          description: Action ID for brightness decrease
+          default: brightness_step_down
+          selector:
+            text:
+
+        action_brightness_increase:
+          name: Brightness Increase Action ID
+          description: Action ID for brightness increase
+          default: brightness_step_up
+          selector:
+            text: 
+            
+        brightness_step_override:
+          name: Brightness Step Override
+          description: An override value that defines custom brightness step
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 255
+              step: 1
+              unit_of_measurement: "level"
+              
+        action_brightness_increment_callback:
+          name: Callback
+          description: "Callback action"
+          default: []
+          selector:
+            action: {}                   
+    
+    Action_Group_Brightness_Hold:
+      name: "Actions: Brightness Hold"
+      collapsed: true
+      input: 
+        action_brightness_hold:
+          name: Hold Action ID
+          description: Action ID for hold (start to change brightness)
+          default: hold
+          selector:
+            text:
+            
+        action_brightness_release:
+          name: Release Action ID
+          description: Action ID for release (stop process of changing brightness after hold)
+          default: release
+          selector:
+            text:
+            
+        hold_brightness_step:
+          name: Brightness Step
+          description: Amount to change brightness per tick (1–255)
+          default: 15
+          selector:
+            number:
+              min: 0
+              max: 255
+              step: 1
+              unit_of_measurement: "level"
+              
+    Action_Group_Brightness_List:
+      name: "Actions: Brightness List"
+      collapsed: true
+      input:
+        action_brightness_list_up:
+          name: Brightness List Up Action ID
+          description: Action ID to set next value from brightness list 
+          default: 'double'
+          selector:
+            text:      
+  
+        action_brightness_list_down:
+          name: Brightness List Down Action ID
+          description: Action ID to set previous value from brightness list 
+          default: ''
+          selector:
+            text:
+            
+        brightness_list_entity:
+          name: Brightness List Entity
+          description: An input_select entity containing brightness relative values (0, 25, 50 and etc.)
+          default: null
+          selector:
+            entity:
+              domain: input_select  
+              
+        action_brightness_list_callback:
+          name: Callback
+          description: "Callback action"
+          default: []
+          selector:
+            action: {} 
+            
+    Action_Group_Brightness_MinMax:
+      name: "Actions: Brightness Set Min/Max"
+      collapsed: true
+      input:
+        action_brightness_set_min:
+          name: Set Min Brightness Action ID
+          description: Action ID to set maximum brightness value
+          default: 'set_min_brightness'
+          selector:
+            text:
+            
+        action_brightness_set_min_callback:
+          name: Set Min Callback
+          description: "Set Min Callback Action"
+          default: []
+          selector:
+            action: {}   
+            
+        action_brightness_set_max:
+          name: Set Max Brightness Action ID
+          description: Action ID to set minimum brightness value
+          default: 'set_max_brightness'
+          selector:
+            text:
+            
+        action_brightness_set_max_callback:
+          name: Set Max Callback
+          description: "Set Max Callback Action"
+          default: []
+          selector:
+            action: {}
+            
+        action_brightness_set_min_or_max:
+          name: Set Min Or Max Brightness Action ID
+          description: Action ID to set min or max brightness value (decision will be made based on current brightness value i.e. if current brightness is high, then will set min brightess, the opposite logic for max brightness)
+          default: 'set_min_or_max_brightness'
+          selector:
+            text: 
+          
+        action_brightness_set_min_or_max_callback:
+          name: Set Min Or Max Callback
+          description: "Set Min Or Max Callback Action"
+          default: []
+          selector:
+            action: {}               
+
+    Action_Group_ColorTemp:
+      name: "Color Temperature"
+      collapsed: true
+      input:
+        min_color_temp:
+          name: Minimum Color Temperature
+          description: "A number that specifies minumum color temperature. Note: will be clamped to max temperature supported by the light."
+          default: 2000
+          selector:
+            number:
+              min: 2000
+              max: 12000
+              step: 100
+              unit_of_measurement: "K"
+
+        max_color_temp:
+          name: Maximum Color Temperature
+          description: "A number that specifies maximum color temperature. Note: will be clamped to max temperature supported by the light."
+          default: 7000
+          selector:
+            number:
+              min: 2000
+              max: 12000
+              step: 100
+              unit_of_measurement: "K"
+     
+    Action_Group_ColorTemp_Increment:
+      name: "Actions: Color Temperature Increment"
+      collapsed: true
+      input:
+        action_color_temp_decrease:
+          name: Color Temperature Decrease Action ID
+          description: Action ID for color temperature decrease
+          default: color_temperature_step_down
+          selector:
+            text:
+
+        action_color_temp_increase:
+          name: Color Temperature Increase Action ID
+          description: Action ID for color temperature increase
+          default: color_temperature_step_up
+          selector:
+            text:  
+            
+        color_temp_step_override:
+          name: Color Temperature Step Override
+          description: An override value that overrides color temperature step size (in Kelvins)
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 2000
+              step: 100
+              unit_of_measurement: "K"  
+              
+        action_color_temp_increment_callback:
+          name: Callback
+          description: "Callback action"
+          default: []
+          selector:
+            action: {}               
+              
+    Action_Group_ColorTemp_Hold:
+      name: "Actions: Color Temperature Hold"
+      collapsed: true
+      input: 
+        action_color_temp_hold:
+          name: Hold Action ID
+          description: Action ID for hold (start to change color temperature)
+          default:
+          selector:
+            text:
+            
+        action_color_temp_release:
+          name: Release Action ID
+          description: Action ID for release (stop process of changing color temperature after hold)
+          default:
+          selector:
+            text:
+            
+        hold_color_temp_step:
+          name: Color Temperature Step
+          description: Amount to change color temperature per tick (0-1000)
+          default: 100
+          selector:
+            number:
+              min: 0
+              max: 1000
+              step: 50
+              unit_of_measurement: "K"                 
+ 
+    Action_Group_ColorTemp_List:
+      name: "Actions: Color Temperature List"
+      collapsed: true
+      input: 
+        action_color_temp_list_up:
+          name: Color Temperature List Up Action ID
+          description: Action ID to set next value from color temperature list 
+          default: ''
+          selector:
+            text:      
+  
+        action_color_temp_list_down:
+          name: Color Temperature List Down Action ID
+          description: Action ID to set previous value from color temperature list 
+          default: ''
+          selector:
+            text:
+      
+        color_temp_list_entity:
+          name: Color Temperature List Entity
+          description: An input_select entity containing Kelvin values (e.g., 2700, 4000, 6000)
+          default: null
+          selector:
+            entity:
+              domain: input_select 
+              
+        action_color_temp_list_callback:
+          name: Callback
+          description: "Callback action"
+          default: []
+          selector:
+            action: {}  
+            
+    Action_Group_RGB:
+      name: "RGB"
+      collapsed: true
+      input:
+        min_hue:
+          name: Minimum Hue
+          description: A number that specifies minumum hue value
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 360
+              step: 1
+              unit_of_measurement: "deg"
+
+        max_hue:
+          name: Maximum Hue
+          description: A number that specifies maximum hue value
+          default: 360
+          selector:
+            number:
+              min: 0
+              max: 360
+              step: 1
+              unit_of_measurement: "deg"
+     
+    Action_Group_RGB_Increment:
+      name: "Actions: RGB Increment"
+      collapsed: true
+      input:
+        action_hue_decrease:
+          name: Hue Decrease Action ID
+          description: Action ID for hue decrease
+          default: ''
+          selector:
+            text:
+
+        action_hue_increase:
+          name: Hue Increase Action ID
+          description: Action ID for hue increase
+          default: ''
+          selector:
+            text:  
+            
+        hue_step_override:
+          name: Hue Step Override
+          description: An override value that overrides hue step size
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 360
+              step: 1
+              unit_of_measurement: "deg"  
+              
+        action_hue_increment_callback:
+          name: Callback
+          description: "Callback action"
+          default: []
+          selector:
+            action: {}               
+              
+    Action_Group_RGB_Hold:
+      name: "Actions: RGB Hold"
+      collapsed: true
+      input: 
+        action_hue_hold:
+          name: Hold Action ID
+          description: Action ID for hold (start to change hue)
+          default:
+          selector:
+            text:
+            
+        action_hue_release:
+          name: Release Action ID
+          description: Action ID for release (stop process of changing hue after hold)
+          default:
+          selector:
+            text:
+            
+        hold_hue_step:
+          name: Hue Step
+          description: Amount to change hue per tick (0-360)
+          default: 30
+          selector:
+            number:
+              min: 0
+              max: 360
+              step: 1
+              unit_of_measurement: "deg"                 
+ 
+    Action_Group_Hue_List:
+      name: "Actions: RGB List"
+      collapsed: true
+      input: 
+        action_color_list_up:
+          name: Color List Up Action ID
+          description: Action ID to set next value from color list 
+          default: ''
+          selector:
+            text:      
+  
+        action_color_list_down:
+          name: Color List Down Action ID
+          description: Action ID to set previous value from color list 
+          default: ''
+          selector:
+            text:
+      
+        color_list_entity:
+          name: Color List Entity
+          description: An input_select entity containing color values. Hue values are currently supported.
+          default: null
+          selector:
+            entity:
+              domain: input_select
+              
+        action_color_list_callback:
+          name: Callback
+          description: "Callback action"
+          default: []
+          selector:
+            action: {}     
+            
+    Action_Group_Preset_List:
+      name: "Actions: Preset List"
+      collapsed: true
+      input: 
+        action_preset_list_up:
+          name: Preset List Up Action ID
+          description: Action ID to set next value from preset list 
+          default: ''
+          selector:
+            text:      
+  
+        action_preset_list_down:
+          name: Preset List Down Action ID
+          description: Action ID to set previous value from preset list 
+          default: ''
+          selector:
+            text:
+      
+        preset_list_entity:
+          name: Preset List Entity
+          description: "An input_select entity containing preset values. Each entry must have the following layout: `[Color Mode];[Value];[Brightness]`, example `rgb_color;[255,0,255];255`. Supported options for color mode are: `color_temp`, `rgb_color`, `dimmer`"
+          default: null
+          selector:
+            entity:
+              domain: input_select
+              
+        action_preset_list_callback:
+          name: Callback
+          description: "Callback action"
+          default: []
+          selector:
+            action: {}              
+
+    CommonListParameter:
+      name: "Common List Parameters"
+      collapsed: true
+      input:
+        list_control_loop:
+          name: List Control Loop
+          description: Controls if increment should restart the loop when reaching end index i.e. reaching border values will reset current index. `It makes sense to turn off the option if you specify separate actions for list up/list down actions`.
+          default: true
+          selector:
+            boolean:
+            
+    CommonHoldParameter:
+      name: "Common Hold Parameters"
+      collapsed: true
+      input:
+        hold_delay_ms:
+          name: Delay Between Hold Action Steps (ms)
+          description: Delay between brightness changes during hold
+          default: 100
+          selector:
+            number:
+              min: 16
+              max: 2000
+              step: 20
+              unit_of_measurement: "ms"
+
+    ActionsGroup:
+      name: "Actions"
+      collapsed: true
+      input:      
+        any_action_callback:
+          name: Any Action Callback
+          description: Action(s) to run when any action triggered
+          default: []
+          selector:
+            action: {}
+    
+        automation_condition:
+          name: Condition Action
+          description: Automation will only run if the condition statement is true
+          default: []
+          selector:
+            condition: {}     
+            
+    CustomActionsGroup:
+      name: "Custom Actions"
+      collapsed: true
+      input:      
+        action_custom_1:
+          name: Action ID 1
+          description: Action ID that trigger callback 1
+          default: ""
+          selector:
+            text: {}
+        action_custom_callback_1:
+          name: Action Callback 1
+          description: Actions to run when Action ID 1 is received
+          default: []
+          selector:
+            action: {}
+            
+        action_custom_2:
+          name: Action ID 2
+          description: Action ID that trigger callback 2
+          default: ""
+          selector:
+            text: {}
+        action_custom_callback_2:
+          name: Action Callback 2
+          description: Actions to run when Action ID 2 is received
+          default: []
+          selector:
+            action: {}    
+            
+        action_custom_3:
+          name: Action ID 3
+          description: Action ID that trigger callback 3
+          default: ""
+          selector:
+            text: {}
+        action_custom_callback_3:
+          name: Action Callback 3
+          description: Actions to run when Action ID 3 is received
+          default: []
+          selector:
+            action: {}
+            
+        action_custom_4:
+          name: Action ID 4
+          description: Action ID that trigger callback 4
+          default: ""
+          selector:
+            text: {}
+        action_custom_callback_4:
+          name: Action Callback 4
+          description: Actions to run when Action ID 4 is received
+          default: []
+          selector:
+            action: {}
+            
+condition:
+  - condition: template
+    value_template: "{{ 'action' in trigger.payload_json }}"
+  - condition: !input automation_condition
+    
+# TODO:
+# - Check state of the trigger -> Test
+# - Refactor on/off all actions
+# - Action that allows to switch between color_modes: `switch_current_color_mode`, `current_color_mode_value_increase`, `current_color_mode_value_decrease`, `current_color_mode_list_up`, `current_color_mode_list_down`, `current_color_mode_hold`, `current_color_mode_release`.
+
+trigger:
+  - platform: mqtt
+    topic: !input mqtt_topic
+  - platform: mqtt
+    topic: !input mqtt_topic2
+  - platform: mqtt
+    topic: !input mqtt_topic3
+  - platform: mqtt
+    topic: !input mqtt_topic4 
+    
+variables:
+
+  # JSON state constants
+  state_key_hold_direction: 'hd'
+  state_key_last_action_step_size: 'lass'
+  state_key_preset_index: 'pi'
+  
+  # Prefixes
+  state_key_color_temp_mode_prefix: 'ctm_'
+  state_key_hue_mode_prefix: 'hm_'
+  
+  # Postfixes
+  state_postfix_last_list_index: 'lli'
+  state_postfix_brightness: 'br'
+  
+  # Turn ON.
+  action_turn_on: !input action_turn_on
+  action_turn_on_all: !input action_turn_on_all
+  
+  # Turn OFF.
+  action_turn_off: !input action_turn_off
+  action_turn_off_all: !input action_turn_off_all  
+  
+  # Alternative Light
+  alternative_light_1: !input alternative_light_1
+  alternative_light_2: !input alternative_light_2
+  alternative_light_1_toggle_callback: !input alternative_light_1_toggle_callback
+  alternative_light_2_toggle_callback: !input alternative_light_2_toggle_callback
+  is_alternative_action_id_supported: >
+    {{ action_turn_on != action_turn_off
+    and (action_turn_on_all != action_turn_off_all) if (action_turn_off_all != '' and action_turn_on_all != '') else true }}
+  is_alternative_light_supported: >
+    {{ (alternative_light_1 is not none or alternative_light_2 is not none)
+    and is_alternative_action_id_supported }}
+  
+  # Light
+  apply_common_options_to_newly_enabled_light: !input apply_common_options_to_newly_enabled_light
+  target_lights_helper: !input target_lights_helper
+  target_lights: !input target_lights
+  best_source_light_for_options: !input best_source_light_for_options
+  resolved_all_lights: >-
+    {% set result = [] %}
+    {% if target_lights_helper != '' %}
+      {% set result = target_lights_helper | map('states') | list %}
+    {% elif target_lights | length > 0 %}
+      {% set result = result + target_lights %}
+    {% endif %}
+    {{ result }}
+  enabled_lights_default: "{{ resolved_all_lights | select('is_state','on') | list }}"
+  are_all_lights_on_default: "{{ enabled_lights_default | length == resolved_all_lights | length }}"
+  are_all_lights_off_default: "{{ enabled_lights_default | length == 0 }}"
+  is_any_light_on_default: "{{ enabled_lights_default | length != 0 }}"
+  first_not_enabled_from_start_index: >
+    {% set ns = namespace(idx=-1) %}
+    {% for i in range(resolved_all_lights|length) %}
+      {% if not is_state(resolved_all_lights[i], 'on') %}
+        {% set ns.idx = i %}
+        {% break %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.idx }}       
+  first_enabled_index_from_end: >
+    {% set ns = namespace(idx=-1) %}
+    {% for i in range(resolved_all_lights|length - 1, -1, -1) %}
+      {% if is_state(resolved_all_lights[i], 'on') %}
+        {% set ns.idx = i %}
+        {% break %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.idx }}       
+  devices_to_control: >
+    {% if are_all_lights_off_default and is_alternative_light_supported %}
+      {% set items = [] %}
+      {% if alternative_light_1 is not none and is_state(alternative_light_1, 'on') %}
+        {% set items = items + [alternative_light_1] %}
+      {% endif %}
+      {% if alternative_light_2 is not none and is_state(alternative_light_2, 'on')  %}
+        {% set items = items + [alternative_light_2] %}
+      {% endif %}
+      {{ items }}
+    {% else %}
+      {{ enabled_lights_default }}
+    {% endif %}
+  lights_to_control: >
+    {{ devices_to_control | list | select('match', '^light\\.') | list }}
+  options_reference_light: >
+    {% if (best_source_light_for_options is not none) and is_state(best_source_light_for_options, 'on') %}
+      {{ best_source_light_for_options }}
+    {% else %}
+      {{ none if (lights_to_control | length == 0) else lights_to_control[(lights_to_control | length) - 1] }}
+    {% endif %}
+  enabled_lights: "{{ lights_to_control | select('is_state','on') | list }}"
+  is_any_light_on: "{{ lights_to_control | length != 0 }}"
+    
+  # JSON global state.
+  automation_state_entity: !input automation_state_entity
+  automation_state_global: >
+      {% if automation_state_entity is not none %}
+        {% set text = states(automation_state_entity) | string %}
+        {% if text in ['unknown','unavailable','none',''] %}
+          {{ dict() }}
+        {% else %}
+          {{ text | from_json }}
+        {% endif %}
+      {% else %}
+        {{ dict() }}
+      {% endif %}
+  automation_state_key_override: !input automation_state_key_override
+  default_automation_state_key: 'mqtt_light_control'
+  automation_state_key: >
+    {% if automation_state_key_override != '' %}
+      {{ automation_state_key_override }}
+    {% else %}
+      {{ resolved_all_lights[0] if resolved_all_lights | length > 0 else default_automation_state_key }}
+    {% endif %}
+  automation_state: "{{ automation_state_global.get(automation_state_key, dict()) }}"
+
+  # Action step.
+  action_step_payload_key: !input action_step_payload_key
+  action_step_entity: !input action_step_entity
+  action_step_fallback: !input action_step_fallback
+  action_id: "{{ trigger.payload_json.action }}"
+  action_step_size: >-
+      {% set key = action_step_payload_key %}
+      {% if key != '' and key in trigger.payload_json %}
+        {{ trigger.payload_json[key] }}
+      {% elif action_step_entity is not none %}
+        {% set value = states(action_step_entity) %}
+        {{ 0 if value in ['unknown', 'unavailable', 'none', ''] else value | int }}
+      {% else %}
+        {{ action_step_fallback }}
+      {% endif %}
+  result_action_step_size: >
+    {{ (automation_state.get(state_key_last_action_step_size,0) | int) if action_step_size == 0 else action_step_size }}
+
+  # Brightness
+  action_brightness_list_up: !input action_brightness_list_up
+  action_brightness_list_down: !input action_brightness_list_down
+  action_brightness_decrease: !input action_brightness_decrease
+  action_brightness_increase: !input action_brightness_increase
+  action_brightness_hold: !input action_brightness_hold
+  action_brightness_release: !input action_brightness_release  
+  action_brightness_set_min: !input action_brightness_set_min
+  action_brightness_set_max: !input action_brightness_set_max
+  action_brightness_set_min_or_max: !input action_brightness_set_min_or_max
+  result_max_brightness: !input max_brightness
+  result_min_brightness: !input min_brightness
+  
+  # Color temp
+  action_color_temp_list_up: !input action_color_temp_list_up
+  action_color_temp_list_down: !input action_color_temp_list_down
+  action_color_temp_decrease: !input action_color_temp_decrease
+  action_color_temp_increase: !input action_color_temp_increase
+  action_color_temp_hold: !input action_color_temp_hold
+  action_color_temp_release: !input action_color_temp_release
+  min_color_temp: !input min_color_temp
+  max_color_temp: !input max_color_temp
+  min_max_mireds_values: >
+    {% set ns = namespace(min=min_color_temp,max=max_color_temp) %}  
+    {% for l in resolved_all_lights %}
+      {% set light_min = state_attr(l, 'min_color_temp_kelvin') %}
+      {% if light_min is not none %}
+        {% set ns.min = [ns.min, light_min | int] | max %}
+      {% endif %}
+      {% set light_max = state_attr(l, 'max_color_temp_kelvin') %}
+      {% if light_min is not none %}
+        {% set ns.max = [ns.max, light_max | int] | min %}
+      {% endif %}   
+    {% endfor %}
+    {{ [ns.min, ns.max] }}
+  result_min_color_temp: "{{ min_max_mireds_values[0] }}"
+  result_max_color_temp: "{{ min_max_mireds_values[1] }}"
+  
+  # Hue
+  action_color_list_up: !input action_color_list_up
+  action_color_list_down: !input action_color_list_down
+  action_hue_decrease: !input action_hue_decrease
+  action_hue_increase: !input action_hue_increase
+  action_hue_hold: !input action_hue_hold
+  action_hue_release: !input action_hue_release  
+  result_max_hue: !input max_hue
+  result_min_hue: !input min_hue
+  default_saturation: 100
+  rgb_color_modes: ['rgb_color', 'hs_color', 'hs', 'xy']
+  
+  # Presets
+  action_preset_list_up: !input action_preset_list_up
+  action_preset_list_down: !input action_preset_list_down
+  
+  # Callbacks
+  any_action_callback: !input any_action_callback  
+  
+  # Actions
+  turn_on_action_ids: "{{ [action_turn_on, action_turn_on_all] }}"
+  turn_off_action_ids: "{{ [action_turn_off, action_turn_off_all] }}"
+  turn_on_and_off_action_ids: "{{ turn_on_action_ids + turn_off_action_ids }}"
+  
+  # Custom actions.
+  action_custom_1: !input action_custom_1
+  action_custom_2: !input action_custom_2
+  action_custom_3: !input action_custom_3
+  action_custom_4: !input action_custom_4
+  
+  # State
+  now_color_mode: "{{ state_attr(options_reference_light, 'color_mode') if options_reference_light else '' }}"
+  now_is_color_temp_mode: "{{ now_color_mode in ['color_temp'] }}"
+  now_is_rgb_mode: "{{ now_color_mode in rgb_color_modes }}"
+  now_mode_state_prefix: >
+    {% if now_is_color_temp_mode %}
+      {{ state_key_color_temp_mode_prefix }}
+    {% elif now_is_rgb_mode %}
+      {{ state_key_hue_mode_prefix }}
+    {% endif %}
+  now_mode_state_brightness: "{{ now_mode_state_prefix + 'last_brightness' }}"
+  
+  # Other
+  is_debug: false
+  is_base_debug: false
+  
+mode: restart
+  
+action:
+  # Debug info (log if required)
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_base_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Debug Info"
+              message: >
+                action_id = {{ action_id }},
+                lights_to_control = {{ lights_to_control }},
+                options_reference_light = {{ options_reference_light }},
+                action_brightness_set_min_or_max = {{ action_brightness_set_min_or_max }},
+                is_any_light_on = {{ is_any_light_on }}
+                
+  # Guards.             
+  - choose:
+      # No lights resolved.
+      - conditions:
+          - condition: template
+            value_template: "{{ resolved_all_lights | length == 0 }}"
+        sequence:
+          - stop: "No light target defined. Please set either 'Target Light' or 'Target Light Helper'."
+      
+      # Action ID is empty
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id == '' }}"
+        sequence:
+          - stop: "MQTT action ID is empty. Stopping execution."               
+      
+   # Actual actions.
+  - choose:
+
+      # action_turn_on
+      # action_turn_on_all
+      # action_turn_off
+      # action_turn_off_all
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ action_id in turn_on_and_off_action_ids }}
+        sequence:
+          - variables:
+              repeat_supported: >
+                {{ not (action_turn_on in turn_off_action_ids)
+                and not (action_turn_on_all in turn_off_action_ids)
+                and not (action_turn_off in turn_on_action_ids)
+                and not (action_turn_off_all in turn_on_action_ids) }}
+                
+              is_action_turn_on: "{{ action_id == action_turn_on }}"
+              is_action_turn_on_all: "{{ action_id == action_turn_on_all }}"
+              is_action_turn_off: "{{ action_id == action_turn_off }}"
+              is_action_turn_off_all: "{{ action_id == action_turn_off_all }}"
+              
+              is_turn_on_default: >
+                {% if is_action_turn_on %}
+                  {{ not is_any_light_on_default if action_turn_on == action_turn_off else true }}
+                {% elif is_action_turn_on_all %}
+                  {{ not is_any_light_on_default if action_turn_on_all == action_turn_off_all else true }}
+                {% endif %}
+              is_turn_off_default: "{{ not is_turn_on }}"
+              
+              alternative_target: >
+                {% if not is_alternative_light_supported or is_any_light_on_default or is_turn_on_default %}
+                    None
+                {% elif alternative_light_1 is not none and action_id == action_turn_off %}
+                  {{ alternative_light_1 }}
+                {% elif alternative_light_2 is not none and action_id == action_turn_off_all %}
+                  {{ alternative_light_2 }}   
+                {% endif %}
+              is_turn_on_alternative: >
+                {% if alternative_target is not none %}
+                  {{ is_state(alternative_target, 'off') }}
+                {% else %}
+                  {{ False | bool }}
+                {% endif %}
+              is_turn_off_alternative: >
+                {% if alternative_target is not none %}
+                  {{ is_state(alternative_target, 'on') }}
+                {% else %}
+                  {{ False | bool }}
+                {% endif %}             
+                
+              is_turn_on: "{{ is_turn_on_default or is_turn_on_alternative }}"
+              is_turn_off: "{{ is_turn_off_default or is_turn_off_alternative }}" 
+              
+              is_alternative_callback: >
+                {{ not is_any_light_on_default 
+                and ((action_id == action_turn_off and alternative_light_1_toggle_callback != []) or (action_id == action_turn_off_all and alternative_light_2_toggle_callback != [])) }}
+                
+          # Debug info (log if required)
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (Turn On/Off)"
+                      message: >
+                        action_id = {{ action_id }},
+                        is_turn_on = {{ is_turn_on }},
+                        alternative_target = {{ alternative_target }},
+                        is_alternative_callback = {{ is_alternative_callback }}
+                
+          - choose:
+              # Toggle Alternative
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_alternative_callback }}"      
+                sequence:
+                  - choose:
+                      # Alternative 1 Toggle
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ action_id == action_turn_off and alternative_light_1_toggle_callback != [] }}"
+                        sequence: !input alternative_light_1_toggle_callback         
+                      # Alternative 2 Toggle
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ action_id == action_turn_off_all and alternative_light_2_toggle_callback != [] }}"
+                        sequence: !input alternative_light_2_toggle_callback   
+                        
+          - choose:          
+              # Turn On
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_turn_on }}"
+                sequence:
+                  - variables: 
+                      is_repeated: "{{ are_all_lights_on_default and alternative_target is none }}"
+                      is_turn_on_all: "{{ action_id == action_turn_on_all and alternative_target is none }}"
+                      
+                  - choose:
+                      # Not repeated
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ not is_repeated }}"
+                        sequence:
+                          - variables:
+                              action_turn_on_callback: !input action_turn_on_callback
+                              action_turn_on_all_callback: !input action_turn_on_all_callback
+                              set_max_brightness_on_turn_on: !input set_max_brightness_on_turn_on
+                              
+                              devices_to_turn_on: >
+                                {% if alternative_target is not none %}
+                                  {{ [alternative_target] }}
+                                {% else %}
+                                  {% if is_turn_on_all %}
+                                    {{ resolved_all_lights }}
+                                  {% else %}
+                                    {{ resolved_all_lights[:first_not_enabled_from_start_index + 1] if first_not_enabled_from_start_index != -1 else [] }}
+                                  {% endif %}
+                                {% endif %}
+                              lights_to_turn_on: >
+                                {{ (devices_to_turn_on | list) | select('match', '^light\\.') | list }}
+                              switches_to_turn_on: >
+                                {{ (devices_to_turn_on | list) | select('match', '^switch\\.') | list }}
+                                
+                              result_options_reference_light: "{{ alternative_target if alternative_target is not none else options_reference_light }}"
+                              color_mode: "{{ state_attr(result_options_reference_light, 'color_mode') if (result_options_reference_light is not none) else none }}"
+                              light_data: >
+                                {% set d = dict() %}
+                                {% if not color_mode or (result_options_reference_light is none) or (not apply_common_options_to_newly_enabled_light) %}
+                                  {% if set_max_brightness_on_turn_on %}
+                                    {% set d = d | combine({ 'brightness': result_max_brightness }) %}
+                                  {% endif %}                                
+                                  {{ d }}
+                                {% else %}
+                                  {% set brightness = 0 %}
+                                  {% if set_max_brightness_on_turn_on %}
+                                    {% set brightness = result_max_brightness %}
+                                  {% else %}
+                                    {% set brightness = state_attr(result_options_reference_light, 'brightness') | int %}
+                                  {% endif %}
+                                  {% set d = d | combine({ 'brightness': brightness }) %}
+                                  {% if color_mode in ['brightness','color_temp'] %}
+                                    {% set color_temp = state_attr(result_options_reference_light, 'color_temp_kelvin') %}
+                                    {% if color_temp is not none %}
+                                      {% set d = d | combine({ 'color_temp_kelvin': color_temp | int }) %}
+                                    {% endif %}
+                                  {% else %}
+                                    {% set rgb_color = state_attr(result_options_reference_light, 'rgb_color') %}
+                                    {% if rgb_color is not none %}
+                                      {% set d = d | combine({ 'rgb_color': rgb_color }) %}
+                                    {% endif %}
+                                  {% endif %}
+                                  {{ d }}
+                                {% endif %}
+                                
+                          # Log debug info.      
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ is_debug }}"
+                                sequence:
+                                  - service: persistent_notification.create
+                                    data:
+                                      title: "Debug Info (Turn ON)"
+                                      message: >
+                                        lights_to_turn_on = {{ lights_to_turn_on }},
+                                        switches_to_turn_on = {{ switches_to_turn_on }}
+                                                
+                          # Actually turn ON the light      
+                          - service: light.turn_on
+                            target:
+                              entity_id: "{{ lights_to_turn_on }}"
+                            data: "{{ light_data }}"
+                            
+                           # Actually turn ON the switch      
+                          - service: switch.turn_on
+                            target:
+                              entity_id: "{{ switches_to_turn_on }}"
+                            
+                          - choose:
+                              # Turn On All Callback
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ is_turn_on_all and action_turn_on_all_callback != [] }}"
+                                sequence: !input action_turn_on_all_callback 
+                          - choose:
+                              # Turn On Callback
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ (not is_turn_on_all) and action_turn_on_callback != [] }}"
+                                sequence: !input action_turn_on_callback                           
+                                
+                      # Repeated
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ is_repeated  }}"
+                        sequence:
+                          - variables:
+                              action_repeat_turn_on_callback: !input action_repeat_turn_on_callback
+                              action_repeat_turn_on_all_callback: !input action_repeat_turn_on_all_callback
+                                
+                              action_for_repeated_turn_on: !input action_for_repeated_turn_on
+                              action_for_repeated_turn_on_all: !input action_for_repeated_turn_on_all 
+                              
+                              result_action: "{{ action_for_repeated_turn_on_all if is_turn_on_all else action_for_repeated_turn_on }}"
+                          
+                          # Debug
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ is_debug }}"
+                                sequence:
+                                  - service: persistent_notification.create
+                                    data:
+                                      title: "Debug Info (Turn ON Repeated)"
+                                      message: >
+                                        result_action = {{ result_action }}                          
+                          
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ result_action != '' }}"
+                                sequence:
+                                  - variables:
+                                      message_payload: >
+                                        {% set new_msg =  trigger.payload_json | combine({'action': result_action}) %}
+                                        {{ new_msg | tojson }} 
+                                  - service: mqtt.publish
+                                    data:
+                                      topic: "{{ trigger.topic }}"
+                                      payload: "{{ message_payload }}"                                
+                              
+                          - choose:
+                              # Turn On All Callback
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ is_turn_on_all and action_repeat_turn_on_all_callback != [] }}"
+                                sequence: !input action_repeat_turn_on_all_callback 
+                          - choose:
+                              # Turn On Callback
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ (not is_turn_on_all) and action_repeat_turn_on_callback != [] }}"
+                                sequence: !input action_repeat_turn_on_callback                           
+                                
+              # Turn Off
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_turn_off }}"
+                sequence:
+                  - variables:
+                      is_repeated: "{{ are_all_lights_off_default and alternative_target is none }}"
+                      is_turn_off_all: "{{ action_id == action_turn_off_all and alternative_target is none }}"
+                      
+                  # Debug
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ is_debug }}"
+                        sequence:
+                          - service: persistent_notification.create
+                            data:
+                              title: "Debug Info (Turn OFF)"
+                              message: >
+                                action_id = {{ action_id }},
+                                are_all_lights_off_default = {{ are_all_lights_off_default }}
+                      
+                  - choose:
+                      # Not repeated.
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ not is_repeated }}"
+                        sequence:
+                          - variables:
+                              devices_to_turn_off: >
+                                {% if alternative_target is not none %}
+                                  {{ [alternative_target] }}
+                                {% else %}
+                                  {% if is_turn_off_all %}
+                                    {{ resolved_all_lights }}
+                                  {% else %}
+                                    {{ [resolved_all_lights[first_enabled_index_from_end]] }}
+                                  {% endif %}    
+                                {% endif %}
+                                
+                              lights_to_turn_off: >
+                                {{ (devices_to_turn_off | list) | select('match', '^light\\.') | list }}
+                              switches_to_turn_off: >
+                                {{ (devices_to_turn_off | list) | select('match', '^switch\\.') | list }}                                
+                                
+                          # Debug
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ is_debug }}"
+                                sequence:
+                                  - service: persistent_notification.create
+                                    data:
+                                      title: "Debug Info (Turn OFF Non Repeated)"
+                                      message: >
+                                        devices_to_turn_off = {{ devices_to_turn_off }},
+                                        lights_to_turn_off = {{ lights_to_turn_off }},
+                                        switches_to_turn_off = {{ switches_to_turn_off }}                                
+                                
+                          # Turn Off the lights.      
+                          - service: light.turn_off
+                            target:
+                              entity_id: "{{ lights_to_turn_off }}"
+
+                          # Turn Off the switches.      
+                          - service: switch.turn_off
+                            target:
+                              entity_id: "{{ switches_to_turn_off }}"
+
+                          # Turn Off All
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ is_turn_off_all and action_turn_off_all_callback != [] }}"
+                                sequence: !input action_turn_off_all_callback
+                          # Turn Off      
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ (not is_turn_off_all) and action_turn_off_callback != [] }}"
+                                sequence: !input action_turn_off_callback     
+                                
+                      # Repeated
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ is_repeated }}"
+                        sequence:
+                          # Turn Off All
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ is_turn_off_all and action_repeat_turn_off_all_callback != [] }}"
+                                sequence: !input action_repeat_turn_off_all_callback
+                          # Turn Off
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ (not is_turn_off_all) and action_repeat_turn_off_callback != [] }}"
+                                sequence: !input action_repeat_turn_off_callback                         
+                          
+          # Run callbacks only if user provided it
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_action_callback != [] }}"
+                sequence: !input any_action_callback                   
+ 
+      # action_brightness_set_min_or_max
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ action_id in [action_brightness_set_min_or_max]
+                and is_any_light_on }}
+        sequence:
+          - variables:
+              current_brightness: "{{ state_attr(options_reference_light, 'brightness') | int }}"
+              threshold: "{{ ((result_max_brightness + result_min_brightness) / 2) | int }}"
+              should_set_max: "{{ current_brightness < threshold }}"
+              result_brightness: "{{ result_max_brightness if should_set_max else result_min_brightness }}"  
+              
+              action_brightness_set_min_or_max_callback: !input action_brightness_set_min_or_max_callback       
+
+          # Debug
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (Set Min Or Max Brightness)"
+                      message: >
+                        should_set_max = {{ should_set_max }},
+                        result_brightness = {{ result_brightness }}
+
+          # Adjust brightness.   
+          - service: light.turn_on
+            target:
+              entity_id: "{{ lights_to_control }}"
+            data:
+              brightness: "{{ result_brightness }}"
+              
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_brightness_set_min_or_max_callback != [] }}"
+                sequence: !input action_brightness_set_min_or_max_callback 
+         
+      # action_brightness_set_max
+      # action_brightness_set_min
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ action_id in [action_brightness_set_max, action_brightness_set_min]
+                and is_any_light_on }}
+        sequence:
+          - variables:
+              should_set_max: "{{ action_id == action_brightness_set_max }}"
+              result_brightness: "{{ result_max_brightness if should_set_max else result_min_brightness }}"
+              
+              action_brightness_set_min_callback: !input action_brightness_set_min_callback
+              action_brightness_set_max_callback: !input action_brightness_set_max_callback              
+
+          # Debug
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (Set Min/Max Brightness)"
+                      message: >
+                        should_set_max = {{ should_set_max }},
+                        result_brightness = {{ result_brightness }}
+
+          # Adjust brightness.   
+          - service: light.turn_on
+            target:
+              entity_id: "{{ lights_to_control }}"
+            data:
+              brightness: "{{ result_brightness }}"
+              
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (not should_set_max) and action_brightness_set_min_callback != [] }}"
+                sequence: !input action_brightness_set_min_callback                   
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ should_set_max and action_brightness_set_max_callback != [] }}"
+                sequence: !input action_brightness_set_max_callback   
+                
+      # action_color_temp_hold
+      # action_brightness_hold
+      # action_hue_hold
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ action_id in [action_brightness_hold, action_color_temp_hold, action_hue_hold]
+                and is_any_light_on
+                and automation_state_entity != '' }}
+        sequence:
+          - variables:
+              is_brightness: "{{ action_id in [action_brightness_hold] }}"
+              is_color_temp: "{{ action_id in [action_color_temp_hold] }}"
+              is_hue: "{{ action_id in [action_hue_hold] }}"
+              direction_invert_threshold: 0.05
+              hold_brightness_step: !input hold_brightness_step
+              hold_color_temp_step: !input hold_color_temp_step
+              hold_hue_step: !input hold_hue_step
+              hold_state: >
+                {% if is_brightness %}
+                  {{ [result_min_brightness, result_max_brightness, hold_brightness_step | int, 'brightness'] }}
+                {% elif is_color_temp %}
+                  {{ [result_min_color_temp, result_max_color_temp, hold_color_temp_step | int, 'color_temp_kelvin'] }}
+                {% elif is_hue %}
+                  {{ [result_min_hue, result_max_hue, hold_hue_step | int, 'hs_color'] }}
+                {% else %}
+                  {{ [] }}
+                {% endif %}
+              hold_delay_ms: !input hold_delay_ms
+              hold_direction_from_state: "{{ automation_state.get(state_key_hold_direction, 1) | int }}"
+              min_value: "{{ hold_state[0] | int }}"          
+              max_value: "{{ hold_state[1] | int }}"                 
+              step_value: "{{ hold_state[2] | int }}"  
+              result_attribute: "{{ hold_state[3] }}"
+              initial_value: >
+                  {% set v = state_attr(options_reference_light, result_attribute) %}
+                  {% if v is none %}
+                    0
+                  {% endif %}
+                  {% if is_hue %}
+                    {{ v[0] }}
+                  {% else %}
+                    {{ v }}
+                  {% endif %} 
+              # Invert direction if it's logically reasonable
+              hold_direction: >
+                {% set size = max_value - min_value %}
+                {% set threshold = ((size | float) * direction_invert_threshold) | int %}
+                {% set diff_to_max = max_value - initial_value %}
+                {% set diff_to_min = initial_value - min_value %}
+                {% if diff_to_max < threshold %}
+                  {{ -1 }}
+                {% elif diff_to_min < threshold %}
+                  {{ 1 }}
+                {% else %}
+                  {{ 1 if hold_direction_from_state == 0 else 0 }}
+                {% endif %}              
+              signed_step_value: "{{ step_value if (hold_direction == 1) else -step_value }}"
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (Hold Start)"
+                      message: >
+                        options_reference_light = {{ options_reference_light }},
+                        hold_state = {{ hold_state }},
+                        action_id = {{ action_id }},
+                        hold_direction = {{ hold_direction }},
+                        signed_step_value = {{ signed_step_value }},
+                        result_attribute = {{ result_attribute }}
+
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({ state_key_hold_direction: hold_direction })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+                
+          # Run callback only if user provided it
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_action_callback != [] }}"
+                sequence: !input any_action_callback            
+                
+          - repeat:
+              while:
+                - condition: template
+                  value_template: "true"
+              sequence:
+                - variables:
+                    current_value: >
+                      {% set v = state_attr(options_reference_light, result_attribute) %}
+                      {% if v is none %}
+                        0
+                      {% endif %}
+                      {% if is_hue %}
+                        {{ v[0] | int }}
+                      {% else %}
+                        {{ v | int }}
+                      {% endif %} 
+                    next_value: "{{ (current_value + signed_step_value) | int }}"
+                    next_value_clamped: "{{ [min_value, [max_value, next_value]|min]|max }}"
+                    value_to_set: >
+                      {% if is_hue %}
+                        {{ [next_value_clamped, default_saturation] }}
+                      {% else %}
+                        {{ next_value_clamped }}
+                      {% endif %}
+                    light_data: >
+                      {% set d = dict() %}
+                      {% set d = d | combine({ result_attribute: value_to_set }) %}
+                      {{ d }}                       
+                     
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ is_debug }}"
+                      sequence:
+                        - service: persistent_notification.create
+                          data:
+                            title: "Debug Info (Hold In Progress)"
+                            message: >
+                                signed_step_value = {{ signed_step_value }},
+                                current_value = {{ current_value }},
+                                value_to_set = {{ value_to_set }}
+                     
+                - service: light.turn_on
+                  target:
+                    entity_id: "{{ lights_to_control }}"
+                  data: "{{ light_data }}"
+                - delay:
+                    milliseconds: "{{ hold_delay_ms }}"            
+          
+       # Release.
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ action_release != '' 
+                and action_id == action_release 
+                and options_reference_light is not none }}
+        sequence:
+          # Run callback only if user provided it
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_action_callback != [] }}"
+                sequence: !input any_action_callback                  
+            
+        # action_color_list_up
+        # action_color_list_down
+        # action_brightness_list_up
+        # action_brightness_list_down
+        # action_color_temp_list_up
+        # action_color_temp_list_down
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ action_id in [action_brightness_list_up, action_brightness_list_down, action_color_temp_list_up, action_color_temp_list_down, action_color_list_up, action_color_list_down]
+                and is_any_light_on
+                and options_reference_light is not none }}
+        sequence:
+          - variables:
+              list_control_loop: !input list_control_loop
+              
+              brightness_list_entity: !input brightness_list_entity
+              color_temp_list_entity: !input color_temp_list_entity
+              color_list_entity: !input color_list_entity
+              
+              is_brightness: "{{ action_id in [action_brightness_list_up, action_brightness_list_down] }}"
+              is_color_temp: "{{ action_id in [action_color_temp_list_up, action_color_temp_list_down] }}"
+              is_hue: "{{ action_id in [action_color_list_up, action_color_list_down] }}"
+          - choose:
+              # [action_brightness_list_up, action_brightness_list_down], but [brightness_list_entity is none]
+              - conditions:
+                  - condition: template
+                    value_template: '{{ is_brightness and (brightness_list_entity is none) }}'
+                sequence:
+                  - stop: "Action is trying to adjust brightness list up/down, but list itself is not set"
+                  
+              # [action_color_temp_list_up, action_color_temp_list_down], but [color_temp_list_entity is none]
+              - conditions:
+                  - condition: template
+                    value_template: '{{ is_color_temp and (color_temp_list_entity is none) }}'
+                sequence:
+                  - stop: "Action is trying to adjust color temperature list up/down, but list itself is not set"                  
+                 
+               # [action_color_list_up, action_color_list_down], but [color_list_entity is none]
+              - conditions:
+                  - condition: template
+                    value_template: '{{ is_hue and (color_list_entity is none) }}'
+                sequence:
+                  - stop: "Action is trying to adjust hue list up/down, but list itself is not set"                  
+          - variables:
+
+              operation_state: >
+                {% if is_brightness %}
+                  {{ [
+                    result_min_brightness, 
+                    result_max_brightness, 
+                    brightness_list_entity, 
+                    'brightness', 
+                    action_id == action_brightness_list_up, 
+                    True,
+                    ''] }}
+                {% elif is_color_temp %}
+                  {{ [
+                    result_min_color_temp, 
+                    result_max_color_temp, 
+                    color_temp_list_entity, 
+                    'color_temp_kelvin', 
+                    action_id == action_color_temp_list_up, 
+                    now_is_color_temp_mode,
+                    state_key_color_temp_mode_prefix ] }}
+                {% elif is_hue %}
+                  {{ [
+                    result_min_hue, 
+                    result_max_hue, 
+                    color_list_entity, 
+                    'hs_color', 
+                    action_id == action_color_list_up, 
+                    now_is_rgb_mode,
+                    state_key_hue_mode_prefix ]
+                  }}
+                {% else %}
+                  {{ [] }}
+                {% endif %}
+                
+              min_value: "{{ operation_state[0] | int }}"
+              max_value: "{{ operation_state[1] | int }}"
+              value_sequence: "{{ state_attr(operation_state[2], 'options') | map('int') | list }}"
+              result_attribute: "{{ operation_state[3] | string }}"  
+              is_step_increment: "{{ operation_state[4] | bool }}"
+              has_switched_mode: "{{ not (operation_state[5] | bool) }}"
+              state_key_prefix: "{{ operation_state[6] | string }}"
+              
+              state_key_index: "{{ state_key_prefix + state_postfix_last_list_index }}"
+              state_key_brightness: "{{ state_key_prefix + state_postfix_brightness }}"
+              
+              current_value: >
+                {% set v = state_attr(options_reference_light, result_attribute) %}
+                {% if v is none %}
+                  0
+                {% elif is_hue %}
+                  {{ v[0] | int }}
+                {% else %}
+                  {{ v | int }}
+                {% endif %}             
+              current_index: >
+                {% if has_switched_mode %}
+                  {{ automation_state.get(state_key_index, 0) | int }}
+                {% else %}
+                  {% set ns = namespace(nearest_index=-1,nearest_diff=9999) %}
+                  {% for i in range(value_sequence|length) %}
+                    {% set diff = (value_sequence[i] - current_value) | abs %}
+                    {% if diff <= ns.nearest_diff %}
+                      {% set ns.nearest_diff = diff %}
+                      {% set ns.nearest_index = i %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ ns.nearest_index }}
+                {% endif %}
+              index_step: >
+                {% if has_switched_mode %}
+                  0
+                {% else %}
+                  {{ 1 if is_step_increment else -1 }}
+                {% endif %}
+              next_index_preview: "{{ current_index + index_step }}"
+              next_index_clamped: >
+                {% if list_control_loop %}
+                  {% if index_step > 0 %}
+                    {{ next_index_preview % (value_sequence | length) }}
+                  {% else %}
+                    {{ ((value_sequence | length) - 1) if next_index_preview < 0 else next_index_preview }}
+                  {% endif %}
+                {% else %}
+                  {{ [0, [(value_sequence | length - 1), next_index_preview]|min]|max }}
+                {% endif %}
+              next_value_preview: "{{ value_sequence[next_index_clamped] | round(0) }}"
+              current_value_clamped: >
+                 {{ [min_value, [max_value, current_value]|min]|max }}
+              next_value_preview_clamped: >
+                 {{ [min_value, [max_value, next_value_preview]|min]|max }}
+              next_index: >
+                {% if next_value_preview_clamped == current_value_clamped %}
+                  {% set corrected_index = 0 if is_step_increment else value_sequence | length - 1 %}
+                  {{ corrected_index }}
+                {% else %}
+                  {{ next_index_clamped }}
+                {% endif %}
+              next_value: "{{ value_sequence[next_index] | int }}"
+              next_value_clamped: >
+                 {{ [min_value, [max_value, next_value]|min]|max }}        
+              value_to_set: >
+                {% if is_hue %}
+                  {{ [next_value_clamped, default_saturation] }}
+                {% else %}
+                  {{ next_value_clamped }}
+                {% endif %}    
+              current_brightness: >
+                {% if state_key == '' %}
+                  {{ next_value_clamped }}
+                {% else %}
+                  {{ state_attr(options_reference_light, 'brightness') | int }}
+                {% endif %}
+              brightness_to_set: >
+                {% if has_switched_mode and state_key != '' %}
+                  {{ automation_state.get(state_key_brightness, current_brightness) | int }}
+                {% else %}
+                  {{ current_brightness }}
+                {% endif %}              
+              light_data: >
+                {% set d = dict() %}
+                {% set d = d | combine({ result_attribute: value_to_set }) %}
+                {% if has_switched_mode and state_key != '' %}
+                  {% set d = d | combine({ 'brightness': brightness_to_set }) %}
+                {% endif %}
+                {{ d }}
+                
+          # Log debug info.      
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (List)"
+                      message: >
+                        operation_state = {{ operation_state }},
+                        prev_state_key_prefix = {{ prev_state_key_prefix }},
+                        state_key_prefix = {{ state_key_prefix }},
+                        has_switched_mode = {{ has_switched_mode }},
+                        light_data = {{ light_data }}
+          
+          # Save persistent state.             
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ state_key != '' }}"   
+                sequence:
+                  - service: input_text.set_value
+                    target:
+                      entity_id: "{{ automation_state_entity }}"
+                    data:
+                      value: >
+                        {% set new_automation_state = (automation_state | combine({ state_key_index: next_index, now_mode_state_prefix + state_postfix_brightness: current_brightness })) %}
+                        {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+                                        
+                        
+          # Adjust the light.      
+          - service: light.turn_on
+            target:
+              entity_id: "{{ lights_to_control }}"
+            data: "{{ light_data }}"
+                
+          # Run callback only if user provided it
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_brightness_list_callback != [] and is_brightness }}"
+                sequence: !input action_brightness_increment_callback   
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_color_temp_list_callback != [] and is_color_temp }}"
+                sequence: !input action_color_temp_list_callback  
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_color_list_callback != [] and is_hue }}"
+                sequence: !input action_color_list_callback  
+                
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_action_callback != [] }}"
+                sequence: !input any_action_callback         
+        
+      # action_brightness_increase
+      # action_brightness_decrease
+      # action_color_temp_increase
+      # action_color_temp_decrease
+      # action_hue_increase
+      # action_hue_decrease
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ (action_id in [action_brightness_increase, action_brightness_decrease, action_color_temp_increase, action_color_temp_decrease, action_hue_increase, action_hue_decrease]) 
+                and is_any_light_on
+                and options_reference_light != '' }}
+        sequence:
+          - variables:
+              is_brightness: "{{ action_id in [action_brightness_increase, action_brightness_decrease] }}"
+              brightness_step_override: !input brightness_step_override  
+              action_brightness_increment_callback: !input action_brightness_increment_callback
+              
+              mir_const: 1000000
+              is_color_temp: "{{ action_id in [action_color_temp_increase, action_color_temp_decrease] }}"
+              color_temp_step_override: !input color_temp_step_override
+              action_color_temp_increment_callback: !input action_color_temp_increment_callback
+              
+              is_hue: "{{ action_id in [action_hue_increase, action_hue_decrease] }}"
+              hue_step_override: !input hue_step_override
+              action_hue_increment_callback: !input action_hue_increment_callback
+              
+              operation_state: >
+                {% set color_mode = state_attr(options_reference_light, 'color_mode') %}
+                {% if is_brightness %}
+                  {{ [result_min_brightness, result_max_brightness, brightness_step_override | int, 'brightness', action_id == action_brightness_increase, true] }}
+                {% elif is_color_temp %}
+                  {{ [result_min_color_temp, result_max_color_temp, color_temp_step_override | int, 'color_temp_kelvin', action_id == action_color_temp_increase, color_mode in ['color_temp']] }}
+                {% elif is_hue %}
+                  {{ [result_min_hue, result_max_hue, hue_step_override | int, 'hs_color', action_id == action_hue_increase, color_mode in rgb_color_modes] }}
+                {% else %}
+                  {{ [] }}
+                {% endif %}      
+                
+              min_value: "{{ operation_state[0] | int }}"
+              max_value: "{{ operation_state[1] | int }}"
+              step_override: "{{ operation_state[2] | int }}"
+              result_attribute: "{{ operation_state[3] | string }}"  
+              is_increment: "{{ operation_state[4] | bool }}"
+              should_act: "{{ operation_state[5] | bool }}"
+              
+              step: >
+                {% if not should_act %}
+                  0
+                {% else %}
+                  {% set fixed_action_step_size = ((mir_const / result_action_step_size) | int) if is_color_temp else result_action_step_size %}
+                  {{ step_override if step_override != 0 else fixed_action_step_size }}
+                {% endif %}            
+              real_step: "{{ step if is_increment else -step }}"            
+              current_value: >
+                {% set v = state_attr(options_reference_light, result_attribute) %}
+                {% if v is none %}
+                  0
+                {% endif %}
+                {% if is_hue %}
+                  {{ v[0] | int }}
+                {% else %}
+                  {{ v | int }}
+                {% endif %}
+              next_value: "{{ (current_value + real_step) | int }}"
+              next_value_clamped: "{{ [min_value, [max_value, next_value]|min]|max }}"
+              value_to_set: >
+                {% if is_hue %}
+                  {{ [next_value_clamped, default_saturation] }}
+                {% else %}
+                  {{ next_value_clamped }}
+                {% endif %}
+              light_data: >
+                {% set d = dict() %}
+                {% set d = d | combine({ result_attribute: value_to_set }) %}
+                {{ d }}  
+                
+          # Log debug info.      
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (Increment)"
+                      message: >
+                        result_action_step_size = {{ result_action_step_size }},
+                        options_reference_light = {{ options_reference_light }},
+                        operation_state = {{ operation_state }},
+                        current_value = {{ current_value }},
+                        real_step = {{ real_step }},
+                        is_increment = {{ is_increment }},
+                        next_value = {{ next_value }},
+                        next_value_clamped = {{ next_value_clamped }},
+                        light_data = {{ light_data }}  
+                        
+          - service: light.turn_on
+            target:
+              entity_id: "{{ lights_to_control }}"
+            data: "{{ light_data }}"
+                
+          # Run callback only if user provided it
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_brightness_increment_callback != [] and is_brightness }}"
+                sequence: !input action_brightness_increment_callback   
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_color_temp_increment_callback != [] and is_color_temp }}"
+                sequence: !input action_color_temp_list_callback            
+          
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_hue_increment_callback != [] and is_hue }}"
+                sequence: !input action_hue_increment_callback                
+          
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_action_callback != [] }}"
+                sequence: !input any_action_callback       
+
+      # action_preset_list_up
+      # action_preset_list_down
+      - conditions:
+          - condition: template
+            value_template: >
+                {{ action_id in [action_preset_list_up, action_preset_list_down]
+                and is_any_light_on
+                and options_reference_light is not none }}
+        sequence:
+          - variables:   
+              list_control_loop: !input list_control_loop
+              preset_list_entity: !input preset_list_entity
+              action_preset_list_callback: !input action_preset_list_callback
+
+          - choose:
+              # List guard
+              - conditions:
+                  - condition: template
+                    value_template: '{{ preset_list_entity is none or preset_list_entity }}'
+                sequence:
+                  - stop: "Action is trying to change preset list up/down, but list itself is not set"
+                  
+          - variables:
+              value_sequence: "{{ state_attr(preset_list_entity, 'options') | list }}"
+              is_increment: "{{ action_id == action_preset_list_up }}"
+              index_step: "{{ 1 if is_increment else -1 }}"
+              current_index: "{{ automation_state.get(state_key_preset_index, 0) | int }}"
+              next_index_preview: "{{ current_index + index_step }}"
+              next_index: >
+                {% if list_control_loop %}
+                  {% if index_step > 0 %}
+                    {{ next_index_preview % (value_sequence | length) }}
+                  {% else %}
+                    {{ ((value_sequence | length) - 1) if next_index_preview < 0 else next_index_preview }}
+                  {% endif %}
+                {% else %}
+                  {{ [0, [(value_sequence | length - 1), next_index_preview]|min]|max }}
+                {% endif %}
+                
+              preset: "{{ value_sequence[next_index] | lower }}"
+              light_data: >
+                {% set parts = preset.split(";") %}
+                {% set ns = namespace(res=dict(), brightness_found=False) %}
+                {% for i in range(parts|length) %}
+                  {% set temp = parts[i].split(':') %}
+                  {% set key = temp[0]  | trim %}
+                  {% set value = temp[1] | trim %}
+                  {% if key == 'brightness' %}
+                    {% set ns.res = ns.res | combine({ 'brightness': value | int }) %} 
+                    {% set ns.brightness_found = True %}
+                  {% elif key == 'color_temp_kelvin' %}
+                    {% set ns.res = ns.res | combine({ 'color_temp_kelvin': value | int }) %}   
+                  {% elif key == 'rgb_color' %}
+                    {% set ns.res = ns.res | combine({ 'rgb_color': value | from_json }) %}  
+                  {% elif key == 'color_mode' %}
+                    {% set ns.res = ns.res | combine({ 'color_mode': value }) %}   
+                  {% endif %}                      
+                {% endfor %}
+                {% if not ns.brightness_found %}
+                  {% set existing_brightness = state_attr(options_reference_light, 'brightness') | int %}
+                  {% set ns.res = ns.res | combine({ 'brightness': existing_brightness }) %} 
+                {% endif %}
+                {{ ns.res }}                
+
+          - service: light.turn_on
+            target:
+              entity_id: "{{ lights_to_control }}"
+            data: "{{ light_data }}"
+
+            # Update JSON state.
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({ state_key_preset_index: next_index })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}        
+
+          # Log debug info.      
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (Preset Increment)"
+                      message: >
+                        current_index = {{ current_index }},
+                        next_index = {{ next_index }},
+                        light_data = {{ light_data }} 
+                        
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_preset_list_callback != [] }}"
+                sequence: !input action_preset_list_callback                         
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_action_callback != [] }}"
+                sequence: !input any_action_callback                          
+                
+   # Custom actions.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ action_id in [action_custom_1, action_custom_2, action_custom_3, action_custom_4] }}"
+        sequence:
+          - variables:
+              action_custom_callback_1: !input action_custom_callback_1
+              action_custom_callback_2: !input action_custom_callback_2
+              action_custom_callback_3: !input action_custom_callback_3
+              action_custom_callback_4: !input action_custom_callback_4
+              
+          - choose:
+              # Action 1
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_id == action_custom_1 and action_custom_callback_1 != [] }}" 
+                sequence: !input action_custom_callback_1
+                
+              # Action 2
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_id == action_custom_2 and action_custom_callback_2 != [] }}" 
+                sequence: !input action_custom_callback_2
+                
+              # Action 3
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_id == action_custom_3 and action_custom_callback_3 != [] }}" 
+                sequence: !input action_custom_callback_3
+                
+              # Action 4
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_id == action_custom_4 and action_custom_callback_4 != [] }}" 
+                sequence: !input action_custom_callback_4               
+            
+   # Store last remembered action step size if available.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ automation_state_entity != '' and action_step_size != 0 }}"
+        sequence:
+          - variables:
+              # Renew global state.
+              automation_state_global_updated: >
+                  {% if automation_state_entity is not none %}
+                    {% set text = states(automation_state_entity) | string %}
+                    {% if text in ['unknown','unavailable','none',''] %}
+                      {{ dict() }}
+                    {% else %}
+                      {{ text | from_json }}
+                    {% endif %}
+                  {% else %}
+                    {{ dict() }}
+                  {% endif %}
+              automation_state_updated: "{{ automation_state_global_updated.get(automation_state_key, dict()) }}"
+              new_automation_state: "{{ (automation_state_updated | combine({ state_key_last_action_step_size: action_step_size })) }}"
+              new_automation_state_global: "{{ automation_state_global_updated | combine({ automation_state_key: new_automation_state }) | tojson }}"
+              
+          # Update state
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {{ new_automation_state_global }}  
+                
+          # Debug info (log if required)
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Debug Info (Store last action size)"
+                      message: >
+                        new_automation_state_global = {{ new_automation_state_global }}
+                        
+                                        
+                            
+            

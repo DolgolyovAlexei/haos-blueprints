@@ -1,0 +1,216 @@
+blueprint:
+  name: "Custom: MQTT Button Control"
+  description: Control a Zigbee2MQTT device with multiple actions, that allows to toggle lights and switches and store entity identifier of last interructed switch/light.
+  domain: automation
+  input:
+  
+    mqtt_group:
+      name: "MQTT"
+      collapsed: false
+      input:
+        mqtt_topic:
+          name: MQTT Topic
+          description: The MQTT topic for your Zigbee button (e.g., zigbee2mqtt/my_button1).
+          selector:
+            text:
+            
+        mqtt_topic2:
+          name: MQTT Topic 2
+          description: The MQTT topic for your Zigbee button (e.g., zigbee2mqtt/my_button2).
+          default: fake
+          selector:
+            text:
+  
+    devices:
+      name: "Primary"
+      collapsed: false
+      input:
+        action_ids:
+          name: Action IDs
+          description: The action IDs that must map to lights (action → light)
+          default: []
+          selector:
+            text:
+              multiple: true
+    
+        switches:
+          name: Switches
+          description: "The list of switches to control. Next types are supported: `light`, `switch`, `input_boolean`"
+          default: []
+          selector:
+            entity:
+              domain: 
+                - light
+                - switch
+                - input_boolean
+              multiple: true        
+            
+    outputs:
+      name: "Outputs"
+      collapsed: false
+      input:
+        last_interacted_text:
+          name: Last Interacted Entity Text Helper (optional)
+          description: "`input_text` entity that will store last enabled entity"
+          default: ""
+          selector:
+            entity:
+              domain: input_text
+              
+    common:
+      name: "Common"
+      collapsed: false
+      input:
+        timeout_for_indication_blink:
+          name: "Timeout for indicator blink"
+          description: If not zero does blink when button with already enabled light is pressed to indicate that the light is active now if elapsed time from last action is greater then the specified value
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 1
+              unit_of_measurement: "s"   
+              
+        blink_count:
+          name: Count of blinks
+          description: "Count of blinks to indicate active light"
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 5
+              step: 1    
+              
+        blink_interval:
+          name: Interval between blinks
+          description: "Interval between indicator blinks (in ms)"
+          default: 250
+          selector:
+            number:
+              min: 0
+              max: 1000
+              step: 50  
+              unit_of_measurement: "ms"   
+
+trigger:
+  - platform: mqtt
+    topic: !input mqtt_topic
+  - platform: mqtt
+    topic: !input mqtt_topic2
+    enabled: "{{ mqtt_topic2 != '' }}"
+    
+mode: restart
+    
+condition:
+  - condition: template
+    value_template: "{{ 'action' in trigger.payload_json }}"
+
+action:
+  - variables:
+      action_id: "{{ trigger.payload_json.action }}"
+      
+      switches: !input switches
+      action_ids: !input action_ids
+      
+      target_index: >
+        {% if action_id in action_ids %}
+          {{ action_ids.index(action_id) }}
+        {% else %}
+          -1
+        {% endif %}
+      target_entity: "{{ switches[target_index] if target_index != -1 else none }}"
+      last_interacted_text: !input last_interacted_text
+      
+      is_debug: false
+     
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ target_entity is not none }}"
+        sequence:
+          - variables:
+              entity_type: "{{ target_entity.split('.')[0] }}"
+              
+          - service: input_text.set_value
+            data:
+              entity_id: "{{ last_interacted_text }}"
+              value: "{{ target_entity }}"
+              
+          - choose:
+              # Light
+              - conditions:
+                  - condition: template
+                    value_template: "{{ entity_type == 'light' }}"
+                sequence:
+                  - variables:
+                      timeout_for_indication_blink: !input timeout_for_indication_blink
+                      seconds_elapsed: >
+                        {{ (as_timestamp(now()) - as_timestamp(states[target_entity].last_changed)) | int }}
+                      should_blink: "{{ timeout_for_indication_blink != 0 and seconds_elapsed > timeout_for_indication_blink }}"      
+                      blink_count: !input blink_count
+                      blink_timeout: !input blink_interval
+                      is_light_on: "{{ is_state(target_entity, 'on') }}"
+                      
+                  # Debug
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ is_debug }}"
+                        sequence:
+                          - service: persistent_notification.create
+                            data:
+                              title: "Debug Info"
+                              message: >
+                                seconds_elapsed = {{ seconds_elapsed }},
+                                should_blink = {{ should_blink }}
+                      
+                  - choose:
+                      # Blink
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ should_blink and is_light_on }}"
+                        sequence:
+                          - repeat:
+                              count: "{{ blink_count }}"
+                              sequence:
+                              
+                                - service: light.turn_off
+                                  target:
+                                    entity_id: "{{ target_entity }}"
+                                  data:
+                                    transition: 0
+                                - delay:
+                                    milliseconds: "{{ blink_timeout }}"
+                                    
+                                - service: light.turn_on
+                                  target:
+                                    entity_id: "{{ target_entity }}"
+                                  data:
+                                    transition: 0
+                                - delay:
+                                    milliseconds: "{{ blink_timeout }}"
+                        
+                    # Actually toggle            
+                    default:
+                      - service: light.toggle
+                        target:
+                          entity_id: "{{ target_entity }}"
+                      
+              # Switch
+              - conditions:
+                  - condition: template
+                    value_template: "{{ entity_type == 'switch' }}"
+                sequence:
+                  - service: switch.toggle
+                    target:
+                      entity_id: "{{ target_entity }}"
+                      
+              # Input Boolean
+              - conditions:
+                  - condition: template
+                    value_template: "{{ entity_type == 'input_boolean' }}"
+                sequence:
+                  - service: input_boolean.toggle
+                    target:
+                      entity_id: "{{ target_entity }}"

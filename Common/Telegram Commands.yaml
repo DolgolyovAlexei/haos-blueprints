@@ -1,145 +1,188 @@
+# =============================================================================
+# Telegram Commands Blueprint
+# =============================================================================
+# This blueprint responds to Telegram bot commands (e.g., /start, /help, /status).
+# Each command can trigger a different callback action and send an optional reply.
+#
+# How It Works:
+# 1. User sends a command to the Telegram bot (e.g., /lights_on)
+# 2. Home Assistant receives telegram_command event
+# 3. Blueprint matches command to the configured list
+# 4. Executes the corresponding callback action
+# 5. Optionally sends a reply message
+#
+# Command Format:
+# Commands should start with "/" (e.g., /status, /lights_on, /arm_alarm)
+# The bot must be configured to receive these commands.
+#
+# Example Configuration:
+# - Commands: ["/status", "/lights_on", "/lights_off", "/arm"]
+# - Answers: ["Status checked", "Lights turned on", "Lights turned off", "Alarm armed"]
+# - Each command has its own callback action
+# =============================================================================
+
 blueprint:
   name: "Custom: Telegram Commands"
   description: >
-    Sends a Telegram message with inline keyboard buttons to multiple chat IDs
-    when executed manually, and reacts to button presses by performing
-    the corresponding action (one per button).
+    Responds to Telegram bot commands (like /start, /help) by executing
+    corresponding callback actions. Supports up to 8 commands with
+    individual callbacks and optional reply messages.
   domain: automation
+
   input:
+    # -------------------------------------------------------------------------
+    # Command Configuration
+    # -------------------------------------------------------------------------
     commands_group:
       name: "Commands"
       collapsed: false
-      input:      
+      input:
         commands:
-          name: Commands
-          description: List of commands
+          name: Command List
+          description: >
+            List of Telegram commands to respond to (include the "/" prefix).
+            Example: ["/status", "/lights_on", "/arm_alarm"]
           default: []
           selector:
             text:
               multiple: true
 
         answers:
-          name: Answers
-          description: List of answers (optional)
+          name: Reply Messages (optional)
+          description: >
+            Reply message for each command (same order as commands list).
+            Leave empty to not send any reply for that command.
           default: []
           selector:
             text:
               multiple: true
-              
+
+    # -------------------------------------------------------------------------
+    # Command Callbacks
+    # -------------------------------------------------------------------------
     callbacks_group:
       name: "Callbacks"
       collapsed: false
-      input:       
-        button_1_callback:
-          name: Button 1 Callback
+      input:
+        command_1_callback:
+          name: Command 1 Callback
+          description: Actions to run when first command is received
           default: []
           selector:
-            action: {} 
-            
-        button_2_callback:
-          name: Button 2 Callback
+            action: {}
+
+        command_2_callback:
+          name: Command 2 Callback
+          description: Actions to run when second command is received
           default: []
           selector:
-            action: {}  
-            
-        button_3_callback:
-          name: Button 3 Callback
+            action: {}
+
+        command_3_callback:
+          name: Command 3 Callback
+          description: Actions to run when third command is received
           default: []
           selector:
-            action: {}  
-            
-        button_4_callback:
-          name: Button 4 Callback
+            action: {}
+
+        command_4_callback:
+          name: Command 4 Callback
+          description: Actions to run when fourth command is received
           default: []
           selector:
-            action: {}      
-            
-        button_5_callback:
-          name: Button 5 Callback
+            action: {}
+
+        command_5_callback:
+          name: Command 5 Callback
+          description: Actions to run when fifth command is received
           default: []
           selector:
-            action: {}  
-            
-        button_6_callback:
-          name: Button 6 Callback
+            action: {}
+
+        command_6_callback:
+          name: Command 6 Callback
+          description: Actions to run when sixth command is received
           default: []
           selector:
-            action: {}  
-            
-        button_7_callback:
-          name: Button 7 Callback
+            action: {}
+
+        command_7_callback:
+          name: Command 7 Callback
+          description: Actions to run when seventh command is received
           default: []
           selector:
-            action: {}  
-            
-        button_8_callback:
-          name: Button 8 Callback
+            action: {}
+
+        command_8_callback:
+          name: Command 8 Callback
+          description: Actions to run when eighth command is received
           default: []
           selector:
-            action: {}  
-            
+            action: {}
+
+# Parallel mode allows multiple commands to be processed simultaneously
 mode: parallel
 
-variables:
-  commands: !input commands 
-  answers: !input answers
-  
-  is_debug: false
-  command: "{{ trigger.event.data.command }}"
-  chat_id: "{{ trigger.event.data.chat_id }}"     
-  
+# =============================================================================
+# Trigger
+# =============================================================================
 trigger:
+  # Listen for Telegram command events
   - platform: event
     event_type: telegram_command
-       
+    id: "telegram_command"
+
+# =============================================================================
+# Variables
+# =============================================================================
+variables:
+  # Input references
+  commands: !input commands
+  answers: !input answers
+
+  # Callback references (needed for condition checks)
+  command_1_callback: !input command_1_callback
+  command_2_callback: !input command_2_callback
+  command_3_callback: !input command_3_callback
+  command_4_callback: !input command_4_callback
+  command_5_callback: !input command_5_callback
+  command_6_callback: !input command_6_callback
+  command_7_callback: !input command_7_callback
+  command_8_callback: !input command_8_callback
+
+  # Extract command and chat ID from trigger event
+  received_command: "{{ trigger.event.data.command | default('') }}"
+  chat_id: "{{ trigger.event.data.chat_id | default('') }}"
+  user_id: "{{ trigger.event.data.user_id | default('') }}"
+
+  # Find the index of the received command in our list
+  # Returns -1 if command not found or callback is empty
+  command_index: >
+    {% set ns = namespace(idx=-1) %}
+    {% for i in range(commands | length) %}
+      {% if received_command == commands[i] %}
+        {% set ns.idx = i %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.idx }}
+
+  # Debug flag - set to true to enable persistent notifications for troubleshooting
+  is_debug: false
+
+# =============================================================================
+# Condition - Only proceed if we received a valid command
+# =============================================================================
+condition:
+  - condition: template
+    value_template: "{{ received_command != '' and command_index >= 0 }}"
+
+# =============================================================================
+# Actions
+# =============================================================================
 action:
-  - variables:
-      command_index: >
-        {% set res = -1 %}
-        {% if (commands | length >= 1 and command == commands[0] and button_1_callback != []) %}
-          {% set res = 0 %}
-        {% elif (commands | length >= 2 and command == commands[1] and button_2_callback != []) %}
-          {% set res = 1 %}            
-        {% elif (commands | length >= 3 and command == commands[2] and button_3_callback != []) %}
-          {% set res = 2 %}       
-        {% elif (commands | length >= 4 and command == commands[3] and button_4_callback != []) %}
-          {% set res = 3 %}                     
-        {% elif (commands | length >= 5 and command == commands[4] and button_5_callback != []) %}
-          {% set res = 4 %}                     
-        {% elif (commands | length >= 6 and command == commands[5] and button_6_callback != []) %}
-          {% set res = 5 %}    
-        {% elif (commands | length >= 7 and command == commands[6] and button_7_callback != []) %}
-          {% set res = 6 %}       
-        {% elif (commands | length >= 8 and command == commands[7] and button_8_callback != []) %}
-          {% set res = 7 %}  
-        {% endif %}
-        {{ res }}
-  - choose:
-      - conditions: "{{ command_index == 0 }}"
-        sequence: !input button_1_callback
-      - conditions: "{{ command_index == 1 }}"
-        sequence: !input button_2_callback  
-      - conditions: "{{ command_index == 2 }}"
-        sequence: !input button_3_callback
-      - conditions: "{{ command_index == 3 }}"
-        sequence: !input button_4_callback  
-      - conditions: "{{ command_index == 4 }}"
-        sequence: !input button_5_callback
-      - conditions: "{{ command_index == 5 }}"
-        sequence: !input button_6_callback  
-      - conditions: "{{ command_index == 6 }}"
-        sequence: !input button_7_callback
-      - conditions: "{{ command_index == 7 }}"
-        sequence: !input button_8_callback     
-
-  - variables:
-      message: >
-        {% if command_index == -1 or answers | length <= command_index %}
-        {% else %}
-          {{ answers[command_index] }}
-        {% endif %}
-
-  # Debug info (log if required)
+  # ---------------------------------------------------------------------------
+  # Debug Logging (optional)
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
@@ -147,18 +190,51 @@ action:
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Debug Info (Telegram Commands)"
+              title: "Telegram Commands Debug"
               message: >
-                command_index = {{ command_index }},
-                commands = {{ commands }},
-                answers = {{ answers }},
-                message = {{ message }}
+                Received command: {{ received_command }}
+                Chat ID: {{ chat_id }}
+                User ID: {{ user_id }}
+
+                Command index: {{ command_index }}
+                Commands list: {{ commands }}
+                Answers list: {{ answers }}
+
+  # ---------------------------------------------------------------------------
+  # Execute Command Callback
+  # ---------------------------------------------------------------------------
+  - choose:
+      - conditions: "{{ command_index == 0 and command_1_callback | length > 0 }}"
+        sequence: !input command_1_callback
+      - conditions: "{{ command_index == 1 and command_2_callback | length > 0 }}"
+        sequence: !input command_2_callback
+      - conditions: "{{ command_index == 2 and command_3_callback | length > 0 }}"
+        sequence: !input command_3_callback
+      - conditions: "{{ command_index == 3 and command_4_callback | length > 0 }}"
+        sequence: !input command_4_callback
+      - conditions: "{{ command_index == 4 and command_5_callback | length > 0 }}"
+        sequence: !input command_5_callback
+      - conditions: "{{ command_index == 5 and command_6_callback | length > 0 }}"
+        sequence: !input command_6_callback
+      - conditions: "{{ command_index == 6 and command_7_callback | length > 0 }}"
+        sequence: !input command_7_callback
+      - conditions: "{{ command_index == 7 and command_8_callback | length > 0 }}"
+        sequence: !input command_8_callback
+
+  # ---------------------------------------------------------------------------
+  # Send Reply Message (if configured)
+  # ---------------------------------------------------------------------------
+  - variables:
+      reply_message: >
+        {% if command_index >= 0 and command_index < (answers | length) %}
+          {{ answers[command_index] }}
+        {% else %}
+        {% endif %}
 
   - choose:
-      - conditions: "{{ message != '' }}"
+      - conditions: "{{ reply_message | trim | length > 0 }}"
         sequence:
-        - service: telegram_bot.send_message
-          data:
-            target: "{{ chat_id }}"
-            message: "{{ message }}"            
-     
+          - service: telegram_bot.send_message
+            data:
+              target: "{{ chat_id }}"
+              message: "{{ reply_message }}"

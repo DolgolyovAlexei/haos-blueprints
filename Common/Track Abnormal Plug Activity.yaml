@@ -1,15 +1,20 @@
 # =============================================================================
-# Power Spike Tracker Blueprint
+# Power Overconsumption Monitor Blueprint
 # =============================================================================
-# This blueprint monitors power sensors for abnormal consumption spikes that
-# might indicate device malfunction or safety concerns.
+# This blueprint monitors power sensors for sustained overconsumption that
+# might indicate device malfunction, overload, or safety concerns.
 #
-# Features:
-# - Monitors multiple power sensors simultaneously
-# - Configurable spike detection ratio (e.g., 2x = power doubled)
-# - Minimum threshold to ignore normal low-power fluctuations
-# - Optional automatic switch turn-off for safety
-# - Derives switch entity from sensor naming convention
+# How It Works:
+# - Triggers when power EXCEEDS a maximum threshold
+# - Requires power to stay high for a configurable duration (filters startup spikes)
+# - Optionally ignores readings below an idle threshold (device "off")
+# - Can automatically turn off the switch for safety
+#
+# Use Cases:
+# - Space heater drawing more than rated wattage (fire risk)
+# - Motor consuming excessive power (mechanical binding/failure)
+# - Appliance exceeding safe operating limits
+# - Extension cord/circuit overload protection
 #
 # Naming Convention:
 # The blueprint assumes sensors follow the pattern: sensor.<name>_power
@@ -18,11 +23,11 @@
 # =============================================================================
 
 blueprint:
-  name: "Custom: Power Spike Tracker"
+  name: "Custom: Power Overconsumption Monitor"
   description: >
-    Monitors power sensors and triggers when consumption spikes beyond a defined
-    ratio compared to the previous reading. Optionally turns off the associated
-    switch for safety. Assumes naming convention: sensor.<name>_power -> switch.<name>
+    Monitors power sensors for sustained overconsumption above a maximum threshold.
+    Filters out normal startup spikes by requiring high power for a sustained duration.
+    Optionally turns off the associated switch for safety.
   domain: automation
 
   input:
@@ -44,29 +49,46 @@ blueprint:
     # -------------------------------------------------------------------------
     # Detection Thresholds
     # -------------------------------------------------------------------------
-    spike_ratio:
-      name: Power Spike Ratio
+    max_power_threshold:
+      name: Maximum Power Threshold
       description: >
-        Minimum ratio of current/previous power to trigger alert.
-        Example: 2.0 means power must at least double to trigger.
-      default: 2.0
+        Alert when power consumption exceeds this value.
+        Set this to slightly above the device's normal maximum draw.
+        Example: For a 1500W heater, set to 1600W.
+      default: 1500
       selector:
         number:
-          min: 1.1
-          max: 10.0
-          step: 0.1
-          mode: slider
+          min: 10
+          max: 10000
+          step: 10
+          unit_of_measurement: W
+          mode: box
 
-    threshold_value:
-      name: Minimum Power Threshold
+    sustained_duration:
+      name: Sustained Duration
       description: >
-        Ignore spikes if current power is below this value.
-        Prevents false alerts from small fluctuations at low power levels.
+        Power must stay above the threshold for this duration before alerting.
+        Filters out normal startup spikes and transient fluctuations.
+        Set to 0 for immediate alerts (not recommended).
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 5
+          unit_of_measurement: seconds
+
+    idle_power_threshold:
+      name: Idle Power Threshold (optional)
+      description: >
+        Ignore readings below this value (device considered "off" or idle).
+        Helps avoid false alerts from sensor noise when device is off.
+        Set to 0 to monitor all readings.
       default: 5
       selector:
         number:
           min: 0
-          max: 5000
+          max: 100
           step: 1
           unit_of_measurement: W
 
@@ -76,8 +98,8 @@ blueprint:
     auto_turn_off:
       name: Auto Turn Off Switch
       description: >
-        Automatically turn off the associated switch when a spike is detected.
-        Useful for safety when abnormal power draw might indicate a problem.
+        Automatically turn off the associated switch when overconsumption is detected.
+        Recommended for safety-critical monitoring.
       default: false
       selector:
         boolean:
@@ -95,36 +117,37 @@ blueprint:
         entity:
           domain: notify
 
-# Restart mode ensures rapid state changes are handled with latest values
-mode: restart
+# Single mode - we want to track each overconsumption event separately
+mode: single
+max_exceeded: silent
 
 # =============================================================================
-# Trigger
+# Trigger - Power exceeds threshold for sustained duration
 # =============================================================================
 trigger:
-  # Monitor all configured power sensors for state changes
-  - platform: state
+  - platform: numeric_state
     entity_id: !input power_sensors
-    id: "power_change"
+    above: !input max_power_threshold
+    for:
+      seconds: !input sustained_duration
+    id: "overconsumption_detected"
 
 # =============================================================================
 # Variables
 # =============================================================================
 variables:
   # Input references
-  spike_ratio: !input spike_ratio
+  max_power_threshold: !input max_power_threshold
   auto_turn_off: !input auto_turn_off
-  threshold_value: !input threshold_value
   notify_target: !input notify_target
+  idle_power_threshold: !input idle_power_threshold
 
   # Trigger context
   entity: "{{ trigger.entity_id }}"
   entity_name: "{{ state_attr(trigger.entity_id, 'friendly_name') | default(trigger.entity_id) }}"
-  prev: "{{ trigger.from_state.state | float(0) }}"
-  curr: "{{ trigger.to_state.state | float(0) }}"
-
-  # Calculate the actual spike ratio for reporting
-  actual_ratio: "{{ (curr / prev) | round(2) if prev > 0 else 0 }}"
+  current_power: "{{ states(trigger.entity_id) | float(0) }}"
+  excess_power: "{{ (current_power - max_power_threshold) | round(1) }}"
+  excess_percent: "{{ ((current_power / max_power_threshold - 1) * 100) | round(1) if max_power_threshold > 0 else 0 }}"
 
   # Derive switch entity from sensor naming convention
   # sensor.<name>_power -> switch.<name>
@@ -136,12 +159,11 @@ variables:
   is_debug: false
 
 # =============================================================================
-# Condition - Only proceed if this is a genuine power spike
+# Condition - Ensure power is above idle threshold (device is actually "on")
 # =============================================================================
 condition:
   - condition: template
-    value_template: >
-      {{ curr > threshold_value and prev > 0 and (curr / prev) >= spike_ratio }}
+    value_template: "{{ current_power > idle_power_threshold }}"
 
 # =============================================================================
 # Actions
@@ -157,19 +179,17 @@ action:
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Power Spike Debug"
+              title: "Power Monitor Debug"
               message: >
                 Entity: {{ entity_name }} ({{ entity }})
-                Previous: {{ prev }}W
-                Current: {{ curr }}W
-                Ratio: {{ actual_ratio }}x
-                Threshold: {{ threshold_value }}W
-                Required ratio: {{ spike_ratio }}x
+                Current: {{ current_power }}W
+                Threshold: {{ max_power_threshold }}W
+                Excess: {{ excess_power }}W (+{{ excess_percent }}%)
                 Switch: {{ switch_name }} ({{ switch_entity }})
                 Auto turn off: {{ auto_turn_off }}
 
   # ---------------------------------------------------------------------------
-  # Send Notification
+  # Send Overconsumption Alert
   # ---------------------------------------------------------------------------
   - choose:
       # Use configured notify target if provided
@@ -181,16 +201,16 @@ action:
             target:
               entity_id: "{{ notify_target }}"
             data:
-              title: "Power Spike Detected"
+              title: "Power Overconsumption Alert"
               message: >
-                {{ entity_name }}: {{ prev }}W → {{ curr }}W ({{ actual_ratio }}x increase)
+                {{ entity_name }} is drawing {{ current_power }}W ({{ excess_power }}W over {{ max_power_threshold }}W limit)
     # Fall back to default notify service
     default:
       - service: notify.notify
         data:
-          title: "Power Spike Detected"
+          title: "Power Overconsumption Alert"
           message: >
-            {{ entity_name }}: {{ prev }}W → {{ curr }}W ({{ actual_ratio }}x increase)
+            {{ entity_name }} is drawing {{ current_power }}W ({{ excess_power }}W over {{ max_power_threshold }}W limit)
 
   # ---------------------------------------------------------------------------
   # Auto Turn Off Switch (if enabled)
@@ -214,8 +234,8 @@ action:
                     target:
                       entity_id: "{{ notify_target }}"
                     data:
-                      message: "{{ switch_name }} has been automatically turned off for safety."
+                      message: "{{ switch_name }} has been automatically turned off due to overconsumption."
             default:
               - service: notify.notify
                 data:
-                  message: "{{ switch_name }} has been automatically turned off for safety."
+                  message: "{{ switch_name }} has been automatically turned off due to overconsumption."

@@ -1,136 +1,213 @@
+# =============================================================================
+# Telegram Keyboard Action Blueprint
+# =============================================================================
+# This blueprint creates interactive Telegram messages with inline keyboard
+# buttons. When a button is pressed, the corresponding callback action runs.
+#
+# How It Works:
+# 1. Manual trigger (service call) -> Sends message with keyboard to chat(s)
+# 2. Button press -> Triggers telegram_callback event
+# 3. Blueprint matches callback data to keyboard_id
+# 4. Executes the corresponding button's callback action
+# 5. Optionally sends answer and/or hides keyboard/message
+#
+# Chat ID Resolution:
+# Chat IDs can be provided in two ways:
+# - Directly as text list (chat_ids input)
+# - From notify entities with friendly names like "Alex (123456789)"
+#   The number in parentheses is extracted as the chat ID
+#
+# Callback Data Format:
+# Each button sends callback data: /<keyboard_id>_<button_index>
+# Example: /my_keyboard_0 for first button of keyboard "my_keyboard"
+# =============================================================================
+
 blueprint:
   name: "Custom: Telegram Keyboard Action"
   description: >
-    Sends a Telegram message with inline keyboard buttons to multiple chat IDs
-    when executed manually, and reacts to button presses by performing
-    the corresponding action (one per button).
+    Sends a Telegram message with inline keyboard buttons to multiple chat IDs.
+    When a button is pressed, executes the corresponding callback action.
+    Supports up to 4 buttons with individual callbacks.
   domain: automation
+
   input:
+    # -------------------------------------------------------------------------
+    # Chat Configuration
+    # -------------------------------------------------------------------------
     chat_group:
       name: "Chats"
       collapsed: false
       input:
         chat_ids:
           name: Telegram Chat IDs
-          description: List of chat IDs
+          description: >
+            List of numeric chat IDs to send messages to.
+            You can find your chat ID by messaging @userinfobot on Telegram.
           default: []
           selector:
             text:
               multiple: true
-              
+
         chat_entities:
           name: Telegram Notification Targets
-          description: "List of notification entities (entity friendly names must be in format `<Name> (<ChatID>)`, for example `Alex (2132562465)` )"
+          description: >
+            Notify entities with chat ID in friendly name.
+            Format: "<Name> (<ChatID>)" - e.g., "Alex (2132562465)"
+            The number in parentheses will be extracted as chat ID.
           default: []
           selector:
             entity:
               domain: notify
               multiple: true
-              
+
+    # -------------------------------------------------------------------------
+    # Message Configuration
+    # -------------------------------------------------------------------------
     message_group:
       name: "Message"
       collapsed: false
-      input:      
+      input:
         keyboard_id:
           name: Keyboard ID
-          description: Identifier of the keyboard. This identifier should be unique to distinguish keyboards.
-          default: 'keyboard'
+          description: >
+            Unique identifier for this keyboard. Used to distinguish
+            button presses from different blueprints/automations.
+          default: "keyboard"
           selector:
             text:
-    
+
         message_text:
           name: Message Text
-          description: Text of the message
-          default: '✉︎ Hey, that a new message'
+          description: The message displayed above the keyboard buttons
+          default: "Hey, here's a new message"
           selector:
             text:
-    
+              multiline: true
+
         buttons:
-          name: Buttons
-          description: List of buttons texts
+          name: Button Labels
+          description: >
+            Text displayed on each button (up to 4 buttons).
+            Buttons appear in a single row.
           default:
             - "✔"
             - "✖"
           selector:
             text:
               multiple: true
-              
+
         answers:
-          name: Answers
-          description: List of answers (optional)
+          name: Answer Messages (optional)
+          description: >
+            Reply message for each button (same order as buttons).
+            Leave empty to not send any reply when button is pressed.
           default: []
           selector:
             text:
-              multiple: true              
-              
+              multiple: true
+
         hide_keyboard_on_press:
-          name: Hide Keyboard On Any Button Press
-          description: Controls if keyboard must be hidden after any button press
+          name: Hide Keyboard After Press
+          description: Remove the keyboard buttons after any button is pressed
           default: true
           selector:
             boolean:
-            
+
         hide_message_on_press:
-          name: Hide Message On Any Button Press
-          description: Control if the message must be hidden after any button press
+          name: Delete Message After Press
+          description: Delete the entire message after any button is pressed
           default: false
           selector:
-            boolean:            
-              
+            boolean:
+
+    # -------------------------------------------------------------------------
+    # Button Callbacks
+    # -------------------------------------------------------------------------
     callbacks_group:
       name: "Callbacks"
       collapsed: false
-      input:       
+      input:
         button_1_callback:
           name: Button 1 Callback
+          description: Actions to run when first button is pressed
           default: []
           selector:
-            action: {} 
-            
+            action: {}
+
         button_2_callback:
           name: Button 2 Callback
+          description: Actions to run when second button is pressed
           default: []
           selector:
-            action: {}  
-            
+            action: {}
+
         button_3_callback:
           name: Button 3 Callback
+          description: Actions to run when third button is pressed
           default: []
           selector:
-            action: {}  
-            
+            action: {}
+
         button_4_callback:
           name: Button 4 Callback
+          description: Actions to run when fourth button is pressed
           default: []
           selector:
-            action: {}          
+            action: {}
 
+# Parallel mode allows multiple button presses to be processed simultaneously
 mode: parallel
 
+# =============================================================================
+# Trigger
+# =============================================================================
+trigger:
+  # Listen for Telegram callback events (button presses)
+  - platform: event
+    event_type: telegram_callback
+    id: "telegram_callback"
+
+# =============================================================================
+# Variables
+# =============================================================================
 variables:
-  buttons: !input buttons 
+  # Input references
+  buttons: !input buttons
   keyboard_id: !input keyboard_id
   hide_keyboard_on_press: !input hide_keyboard_on_press
   hide_message_on_press: !input hide_message_on_press
   answers: !input answers
-  
-  is_action: "{{ trigger.platform is none }}"
-  should_call_keyboard_callback: >
-    {% if trigger.platform is none%}
+
+  # Callback references (needed for condition checks)
+  button_1_callback: !input button_1_callback
+  button_2_callback: !input button_2_callback
+  button_3_callback: !input button_3_callback
+  button_4_callback: !input button_4_callback
+
+  # Determine trigger type
+  # When automation is called via service (action), trigger.platform is undefined
+  is_manual_trigger: "{{ trigger.platform is not defined or trigger.platform is none }}"
+
+  # Check if this callback event belongs to our keyboard
+  # Callback data format: /<keyboard_id>_<index>
+  is_our_callback: >
+    {% if is_manual_trigger %}
       false
     {% else %}
-      {% set button_id = trigger.event.data.data %}
-      {{ button_id.startswith('/' ~ keyboard_id) }}
+      {% set callback_data = trigger.event.data.data | default('') %}
+      {{ callback_data.startswith('/' ~ keyboard_id ~ '_') }}
     {% endif %}
-  is_debug: false
-  
-trigger:
-  - platform: event
-    event_type: telegram_callback
-       
-action:
 
-  # Debug info (log if required)
+  # Debug flag - set to true to enable persistent notifications for troubleshooting
+  is_debug: false
+
+# =============================================================================
+# Actions
+# =============================================================================
+action:
+  # ---------------------------------------------------------------------------
+  # Debug Logging (optional)
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
@@ -138,107 +215,129 @@ action:
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Debug Info"
+              title: "Telegram Keyboard Debug"
               message: >
-                should_call_keyboard_callback = {{ should_call_keyboard_callback}}
+                Trigger platform: {{ trigger.platform | default('manual') }}
+                Is manual trigger: {{ is_manual_trigger }}
+                Is our callback: {{ is_our_callback }}
+                {% if not is_manual_trigger %}
+                Callback data: {{ trigger.event.data.data | default('N/A') }}
+                Chat ID: {{ trigger.event.data.chat_id | default('N/A') }}
+                {% endif %}
 
+  # ---------------------------------------------------------------------------
+  # Handle Button Press (Callback Event)
+  # ---------------------------------------------------------------------------
   - choose:
-      - conditions: 
-          condition: template
-          value_template: "{{ should_call_keyboard_callback | bool }}"
-        sequence: 
+      - conditions:
+          - condition: template
+            value_template: "{{ is_our_callback }}"
+        sequence:
           - variables:
+              # Extract data from the callback event
               callback_data: "{{ trigger.event.data.data }}"
               chat_id: "{{ trigger.event.data.chat_id }}"
-              idx: "{{ callback_data[callback_data | length - 1] | int }}"
+              message_id: "{{ trigger.event.data.message.message_id }}"
+              # Extract button index from callback data (format: /<keyboard_id>_<index>)
+              # This handles multi-digit indices correctly
+              button_index: >
+                {% set prefix = '/' ~ keyboard_id ~ '_' %}
+                {% set idx_str = callback_data[prefix | length:] %}
+                {{ idx_str | int(-1) }}
+
+          # Execute the appropriate button callback
           - choose:
-              - conditions: "{{ idx == 0 and button_1_callback != [] }}"
+              - conditions: "{{ button_index == 0 and button_1_callback | length > 0 }}"
                 sequence: !input button_1_callback
-              - conditions: "{{ idx == 1 and button_2_callback != []  }}"
+              - conditions: "{{ button_index == 1 and button_2_callback | length > 0 }}"
                 sequence: !input button_2_callback
-              - conditions: "{{ idx == 2 and button_3_callback != []  }}"
+              - conditions: "{{ button_index == 2 and button_3_callback | length > 0 }}"
                 sequence: !input button_3_callback
-              - conditions: "{{ idx == 3 and button_4_callback != [] }}"
-                sequence: !input button_4_callback  
-     
+              - conditions: "{{ button_index == 3 and button_4_callback | length > 0 }}"
+                sequence: !input button_4_callback
+
+          # Send answer message if configured for this button
           - choose:
-              - conditions: "{{ idx != -1 and answers | length > idx and answers[idx] | length > 0 }}"
+              - conditions: >
+                  {{ button_index >= 0 and button_index < (answers | length)
+                     and (answers[button_index] | length) > 0 }}
                 sequence:
-                  - choose:
-                      - conditions: "{{ hide_message_on_press }}"
-                        sequence:                  
-                          - service: telegram_bot.send_message
-                            data:
-                              target: "{{ chat_id }}"
-                              message: "{{ answers[idx] }}"  
-                              
-                    default:
-                      - service: telegram_bot.send_message
-                        data:
-                          target: "{{ chat_id }}"
-                          message: "{{ answers[idx] }}"  
-                          reply_to_message_id: "{{ trigger.event.data.message.message_id }}"                    
-                      
+                  - service: telegram_bot.send_message
+                    data:
+                      target: "{{ chat_id }}"
+                      message: "{{ answers[button_index] }}"
+                      # Reply to original message unless we're deleting it
+                      reply_to_message_id: >
+                        {{ omit if hide_message_on_press else message_id }}
+
+          # Handle message/keyboard cleanup
           - choose:
-              # Remove keyboard.
+              # Delete entire message
               - conditions: "{{ hide_message_on_press }}"
-                sequence: 
+                sequence:
                   - service: telegram_bot.delete_message
                     data:
-                      chat_id: "{{ trigger.event.data.chat_id }}"
-                      message_id: "{{ trigger.event.data.message.message_id }}"
-                      
-              # Remove keyboard.
+                      chat_id: "{{ chat_id }}"
+                      message_id: "{{ message_id }}"
+
+              # Just remove keyboard (keep message)
               - conditions: "{{ hide_keyboard_on_press }}"
-                sequence: 
+                sequence:
                   - service: telegram_bot.edit_replymarkup
                     data:
-                      chat_id: "{{ trigger.event.data.chat_id }}"
-                      message_id: "{{ trigger.event.data.message.message_id }}"
-                      inline_keyboard: []    
-                
-      - conditions: 
-          condition: template
-          value_template: "{{ is_action }}"
-        sequence: 
-          - variables:    
+                      chat_id: "{{ chat_id }}"
+                      message_id: "{{ message_id }}"
+                      inline_keyboard: []
+
+  # ---------------------------------------------------------------------------
+  # Send Initial Message (Manual Trigger / Service Call)
+  # ---------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_manual_trigger }}"
+        sequence:
+          - variables:
+              # Get chat IDs from direct input
+              chat_ids: !input chat_ids
+
+              # Extract chat IDs from notify entity friendly names
+              # Format: "Name (123456789)" -> extracts "123456789"
               chat_entities: !input chat_entities
               chat_ids_from_entities: >
-                {% set ns = namespace(numbers=[]) %}
-                {% for e in chat_entities %}
-                  {% set friendly_name =  state_attr(e, 'friendly_name') %}
-                  {% set ns.numbers = ns.numbers + [ friendly_name | regex_findall_index('\((\d+)\)', 0) ] %}
+                {% set ns = namespace(ids=[]) %}
+                {% for entity in chat_entities %}
+                  {% set friendly_name = state_attr(entity, 'friendly_name') | default('') %}
+                  {% set match = friendly_name | regex_findall('\((\d+)\)') %}
+                  {% if match | length > 0 %}
+                    {% set ns.ids = ns.ids + [match[0]] %}
+                  {% endif %}
                 {% endfor %}
-                {{ ns.numbers }}              
-              
-              chat_ids: !input chat_ids
-              result_chat_ids: "{{ chat_ids + chat_ids_from_entities }}"
-              
+                {{ ns.ids }}
+
+              # Combine all chat IDs
+              result_chat_ids: "{{ (chat_ids + chat_ids_from_entities) | unique | list }}"
+
+              # Build inline keyboard with callback data
+              # Format: ["Button Text:/<keyboard_id>_<index>", ...]
               message_text: !input message_text
-              keyboard_text: >
-                {% set ns = namespace(result = []) %}
-                {% for i in range(buttons|length) %}
-                  {% set ns.result = ns.result + [(buttons[i] ~ ':/' ~ keyboard_id ~ i)] %}
+              inline_keyboard: >
+                {% set ns = namespace(buttons=[]) %}
+                {% for i in range(buttons | length) %}
+                  {% set callback_data = '/' ~ keyboard_id ~ '_' ~ i %}
+                  {% set ns.buttons = ns.buttons + [(buttons[i] ~ ':' ~ callback_data)] %}
                 {% endfor %}
-                {{ ns.result }}
-            
+                {{ ns.buttons }}
+
+          # Validate we have at least one chat ID
           - choose:
-              # Broadcast
-              - conditions: 
-                  condition: template
-                  value_template: "{{ result_chat_ids | length == 0 }}"   
+              - conditions: "{{ result_chat_ids | length == 0 }}"
                 sequence:
-                - stop: "No chat ID(s) were resolved. No message will be sent."
+                  - stop: "No chat IDs resolved. Check chat_ids or chat_entities configuration."
 
-              # Target
-              - conditions: 
-                  condition: template
-                  value_template: "{{ result_chat_ids | length != 0 }}"         
-                sequence:
-                - service: telegram_bot.send_message
-                  data:
-                    target: "{{ result_chat_ids }}"
-                    message: "{{ message_text }}"
-                    inline_keyboard: "{{ keyboard_text }}"
-
-
+          # Send the message with keyboard
+          - service: telegram_bot.send_message
+            data:
+              target: "{{ result_chat_ids }}"
+              message: "{{ message_text }}"
+              inline_keyboard: "{{ inline_keyboard }}"

@@ -15,7 +15,7 @@
 #   - Persistent state storage via input_text entity
 #   - Custom action callbacks for extending functionality
 #
-# Author: Custom Blueprint
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

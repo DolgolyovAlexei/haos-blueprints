@@ -1,38 +1,86 @@
+# =============================================================================
+# Washing Machine / Dryer Notifications Blueprint for Home Assistant
+# =============================================================================
+# This blueprint monitors washing machine or dryer appliances and sends
+# notifications for various events throughout the wash/dry cycle.
+#
+# Features:
+#   - Start notification with cycle duration and mode details
+#   - Completion notification (reminder to unload clothes)
+#   - "Almost done" notification (configurable minutes before end)
+#   - Error message notifications
+#   - Preparation mode notification (e.g., for dryer prep)
+#   - Tub/drum cleaning reminder based on wash counter
+#
+# State Machine:
+#   The automation tracks the appliance through these states:
+#   1. IDLE: Waiting for cycle to start
+#   2. RUNNING: Cycle in progress (start notification sent)
+#   3. FINISHING: Near completion (time-to-end notification sent)
+#   4. COMPLETED: Cycle done (completion notification sent, state reset)
+#
+# Persistent State Keys:
+#   - nass: Notification About Start Sent
+#   - nart: Notification About Remaining Time Sent
+#   - naps: Notification About Preparation Sent
+#
+# Requirements:
+#   - Sensors for: remaining time, run state, error messages
+#   - input_text entity for persistent state storage
+#   - Notification service entity
+#
+# Note: Default values are in Russian for LG ThinQ integration.
+#       Adjust run_state_completion_id and other defaults for your language.
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
+# =============================================================================
+
 blueprint:
   name: "Custom: Washing Machine Notifications"
   description: >
     Sends notifications when washing starts (with mode details),
     when errors occur, and when run completes.
   domain: automation
+
+  # ===========================================================================
+  # INPUT CONFIGURATION
+  # ===========================================================================
   input:
+
+    # -------------------------------------------------------------------------
+    # Time & State Sensors
+    # -------------------------------------------------------------------------
+    # Core sensors for tracking the appliance cycle state
     time_group:
       name: "Time"
       collapsed: false
       input:
         remaining_time_sensor:
           name: Remaining Time Sensor
-          description: "Sensor that contains remaining time in format `hh:mm::ss`. Note: `-`, 'unknown' values means remaining time is not available."
+          description: >
+            Sensor that contains remaining time in format `hh:mm:ss`.
+            Note: `-`, 'unknown' values mean remaining time is not available.
           selector:
             entity:
               domain: sensor
-           
+
         run_state_sensor:
           name: Run State Sensor
-          description: "Sensor that run state of the device"
+          description: "Sensor that reports the run state of the device"
           selector:
             entity:
               domain: sensor
-              
+
         run_state_completion_id:
-          name: Run State Completion Id
-          description: "Identifier of run state that indicates that run is completed"
+          name: Run State Completion ID
+          description: "Identifier of run state that indicates that the cycle is completed"
           default: 'Цикл завершен.'
           selector:
-            text:     
-              
+            text:
+
         notify_time_to_end:
           name: Notify Time-to-End (minutes)
-          description: "Send notification if run is about to be finished"
+          description: "Send notification when cycle is about to finish (minutes remaining)"
           default: 10
           selector:
             number:
@@ -40,170 +88,238 @@ blueprint:
               max: 60
               unit_of_measurement: minutes
               mode: slider
-              
+
+    # -------------------------------------------------------------------------
+    # Persistent State Configuration
+    # -------------------------------------------------------------------------
+    # Stores automation state between triggers to track notification history
     persistent_state:
       name: "Persistent State"
       collapsed: false
       input:
         automation_state_entity:
           name: Automation state entity
-          description: "`input_text` that stores the automation state in JSON format. Required for all features proper functioning. `Doesn't require specific initial state, values of the entity can be empty`"
+          description: >
+            `input_text` entity that stores the automation state in JSON format.
+            Required for all features to function properly.
+            Doesn't require specific initial state - values can be empty.
           selector:
             entity:
               domain: input_text
-              
+
         automation_state_placeholder_key:
           name: Automation state placeholder key
-          description: Overrides key for persistent storage if not empty. By default uses identifier of target light, otherwise uses constant. `Don't override it if you don't understand the meaning`
+          description: >
+            Overrides key for persistent storage if not empty.
+            By default uses the remaining time sensor entity ID.
+            Don't override if you don't understand the meaning.
           default: ''
           selector:
-            text:                 
-              
+            text:
+
+    # -------------------------------------------------------------------------
+    # Notification Settings
+    # -------------------------------------------------------------------------
     notification_group:
       name: "Notification"
       collapsed: false
       input:
         input_device_name:
           name: "Device Name"
-          description: Device name (used for notifications)
+          description: "Device name used in notification messages"
           default: "Стиральная машина"
           selector:
             text:
-    
+
         notify_target:
           name: Notification Target
-          description: Device or service to send notifications
+          description: "Notification service entity to send messages to"
           selector:
             entity:
-              domain: notify              
-              
+              domain: notify
+
+    # -------------------------------------------------------------------------
+    # Device Information Sensors
+    # -------------------------------------------------------------------------
     info_group:
       name: "Info"
       collapsed: false
       input:
         non_running_state_ids:
           name: Non Running State ID(s)
-          description: "List of run state ID(s) that indicates that device is not actually doing its direct job"
+          description: >
+            List of run state ID(s) that indicate the device is not actively
+            running a cycle (e.g., 'Pause', 'Standby', 'Ready')
           default: []
           selector:
             text:
-              multiple: true   
-      
+              multiple: true
+
         preparation_state_id:
           name: Preparation Mode State ID (optional)
-          description: "Optional run state ID that indicates that device is preparing to run"
+          description: >
+            Optional run state ID that indicates the device is preparing
+            (e.g., dryer heating up before starting)
           default: 'Подготовка к сушке'
           selector:
-            text:     
-      
+            text:
+
         error_message_sensor:
           name: Error Message Sensor
-          description: "Sensor that reports possible error message"
+          description: "Sensor that reports error messages from the device"
           selector:
             entity:
               domain: sensor
-              
+
         tub_clean_counter_sensor:
-          name: Tub Clean Counter Sensor (Optional)
-          description: "Sensor that reports tub clean counter value"
+          name: Tub Clean Counter Sensor (optional)
+          description: "Sensor that reports the number of cycles since last tub cleaning"
           selector:
             entity:
-              domain: 
+              domain:
                 - sensor
                 - input_number
-              
+
         tub_clean_counter_threshold:
           name: Tub Clean Counter Threshold
-          description: "Threshold for tub clean counter value when notification should be sent. Zero means no reports."
+          description: >
+            Number of cycles after which a tub cleaning reminder is sent.
+            Set to 0 to disable tub cleaning notifications.
           default: 30
           selector:
             number:
               min: 0
               max: 100
-              mode: slider              
-              
+              mode: slider
+
+    # -------------------------------------------------------------------------
+    # Startup Details (optional additional info in start notification)
+    # -------------------------------------------------------------------------
     details_group:
       name: "Details"
       collapsed: false
       input:
         startup_info_sensors:
-          name: Startup Info Sensors (Optional)
-          description: "A list of sensor with some details that will be reported on machine startup notification"
+          name: Startup Info Sensors (optional)
+          description: >
+            List of sensors with additional details to include in the
+            startup notification (e.g., temperature, spin speed, program)
           default: []
           selector:
             entity:
-              domain: 
+              domain:
                 - sensor
                 - binary_sensor
               multiple: true
-              
+
         startup_info_texts:
           name: Startup Info Texts
-          description: "List of texts associated with `Startup Info Sensors` (one per sensor)"
+          description: >
+            Labels for each sensor in `Startup Info Sensors` list.
+            Must have the same number of entries as sensors.
           default: []
           selector:
             text:
-              multiple: true                 
-      
+              multiple: true
+
+# =============================================================================
+# AUTOMATION MODE
+# =============================================================================
+# Restart mode ensures new triggers interrupt any running automation
+# (useful for rapid state changes)
 mode: restart
 
+# =============================================================================
+# TRIGGERS
+# =============================================================================
+# Monitor all relevant sensors for state changes
 trigger:
-  # Remaining time changes
+  # Remaining time changes (tracks cycle progress)
   - platform: state
     entity_id: !input remaining_time_sensor
+
   # Error message appears
   - platform: state
     entity_id: !input error_message_sensor
-  # Run state
+
+  # Run state changes (start, stop, pause, etc.)
   - platform: state
     entity_id: !input run_state_sensor
-  # Tub clean sensor changed
+
+  # Tub clean counter changed
   - platform: state
     entity_id: !input tub_clean_counter_sensor
 
+# =============================================================================
+# CONDITIONS
+# =============================================================================
+# No global conditions - individual cases handle their own logic
 condition: []
 
-
+# =============================================================================
+# VARIABLES
+# =============================================================================
 variables:
-  # JSON state constants
-  state_notification_about_renaming_time_sent: 'nart'
-  state_notification_about_start_sent: 'nass'
-  state_notification_about_preparation_sent: 'naps'
-  
-  # Inputs
+
+  # ---------------------------------------------------------------------------
+  # Persistent State Keys
+  # ---------------------------------------------------------------------------
+  # Short keys to minimize JSON storage size in input_text entity
+  state_notification_about_remaining_time_sent: 'nart'  # "Almost done" notification sent
+  state_notification_about_start_sent: 'nass'           # Start notification sent
+  state_notification_about_preparation_sent: 'naps'     # Preparation notification sent
+
+  # ---------------------------------------------------------------------------
+  # Input Variables
+  # ---------------------------------------------------------------------------
   run_state_sensor: !input run_state_sensor
   non_running_state_ids: !input non_running_state_ids
   preparation_state_id: !input preparation_state_id
-  error_message_sensor: !input error_message_sensor  
+  error_message_sensor: !input error_message_sensor
   remaining_time_sensor: !input remaining_time_sensor
   notify_target: !input notify_target
   notify_time_to_end: !input notify_time_to_end
-  input_device_name: !input input_device_name  
+  input_device_name: !input input_device_name
   tub_clean_counter_sensor: !input tub_clean_counter_sensor
-  tub_clean_counter_threshold: !input tub_clean_counter_threshold 
+  tub_clean_counter_threshold: !input tub_clean_counter_threshold
   run_state_completion_id: !input run_state_completion_id
-      
-  # States
+
+  # ---------------------------------------------------------------------------
+  # Computed State Values
+  # ---------------------------------------------------------------------------
   remaining: "{{ states(remaining_time_sensor) }}"
   device_name: "{{ input_device_name }}"
   run_state: "{{ states(run_state_sensor) }}"
+
+  # Determine if the appliance is actively running a cycle
+  # Excludes: unknown states, non-running states, preparation, and completion
   is_running: >
-    {{ run_state not in ['unknown', 'unavailable', 'waiting', '-'] 
+    {{ run_state not in ['unknown', 'unavailable', 'waiting', '-']
     and run_state not in non_running_state_ids
     and run_state != preparation_state_id
     and run_state != run_state_completion_id
     and remaining not in ['unknown', 'unavailable'] }}
+
+  # Parse remaining time string (hh:mm:ss) to total minutes
   remaining_time_in_minutes: >
-    {% if remaining not in ['unknown', 'unavailable'] %}
+    {% if remaining not in ['unknown', 'unavailable', '-'] %}
       {% set parts = remaining.split(':') %}
-      {% set total = parts[0]|int * 60 + parts[1]|int %}
-      {{ total }}
+      {% if parts | length >= 2 %}
+        {% set total = parts[0]|int * 60 + parts[1]|int %}
+        {{ total }}
+      {% else %}
+        {{ 0 }}
+      {% endif %}
     {% else %}
-      0
+      {{ 0 }}
     {% endif %}
-  
-  # JSON global state.
+
+  # ---------------------------------------------------------------------------
+  # Persistent State Management
+  # ---------------------------------------------------------------------------
   automation_state_entity: !input automation_state_entity
+
+  # Parse global state JSON from input_text entity
   automation_state_global: >
     {% set text = states(automation_state_entity) | string %}
     {% if text in ['unknown','unavailable','none',''] %}
@@ -211,20 +327,33 @@ variables:
     {% else %}
       {{ text | from_json }}
     {% endif %}
+
   automation_state_placeholder_key: !input automation_state_placeholder_key
+
+  # Determine the key for this automation's state
   automation_state_key: >
     {% if automation_state_placeholder_key != '' %}
       {{ automation_state_placeholder_key }}
     {% else %}
       {{ remaining_time_sensor }}
     {% endif %}
+
+  # Get this automation's state from global state
   automation_state: "{{ automation_state_global.get(automation_state_key, dict()) }}"
-  
+
+  # ---------------------------------------------------------------------------
+  # Debug Flag
+  # ---------------------------------------------------------------------------
   is_debug: false
 
+# =============================================================================
+# ACTIONS
+# =============================================================================
 action:
 
-  # Debug info (log if required)
+  # ---------------------------------------------------------------------------
+  # DEBUG: Log current state (enable by setting is_debug: true)
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
@@ -232,87 +361,112 @@ action:
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Debug Info"
+              title: "Debug Info - Washing Machine"
               message: >
                 run_state = {{ run_state }},
                 non_running_state_ids = {{ non_running_state_ids }},
                 remaining_time = {{ states(remaining_time_sensor) }},
                 is_running = {{ is_running }},
-                t = {{ automation_state.get(state_notification_about_start_sent, false)  }}
+                start_notification_sent = {{ automation_state.get(state_notification_about_start_sent, false) }}
 
+  # ===========================================================================
+  # MAIN STATE MACHINE - Handle different cycle events
+  # ===========================================================================
   - choose:
-      # 🟢 Case 1: Washing started
+
+      # -----------------------------------------------------------------------
+      # CASE 1: Cycle Started
+      # -----------------------------------------------------------------------
+      # Triggered when: Device starts running and start notification not yet sent
+      # Action: Send start notification with duration and optional details
       - conditions:
           - condition: template
-            value_template: "{{ not automation_state.get(state_notification_about_start_sent, false) and is_running }}"
+            value_template: >
+              {{ not automation_state.get(state_notification_about_start_sent, false)
+              and is_running }}
         sequence:
           - variables:
               startup_info_sensors: !input startup_info_sensors
               startup_info_texts: !input startup_info_texts
+              # Build notification message with optional sensor details
               message: >
                 {% set ns = namespace(text = '🧺 ' ~ device_name ~ ': старт. Длительность: `' ~ remaining ~ '`.') %}
                 {% for i in range(startup_info_sensors | count) %}
-                  {% set ns.text = ns.text ~ ' ' ~ startup_info_texts[i] ~ ': [' ~ states(startup_info_sensors[i])  ~ '].'  %}
+                  {% set ns.text = ns.text ~ ' ' ~ startup_info_texts[i] ~ ': [' ~ states(startup_info_sensors[i]) ~ '].' %}
                 {% endfor %}
                 {{ ns.text }}
 
+          # Send start notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
               message: "{{ message }}"
-              
+
+          # Mark start notification as sent
           - service: input_text.set_value
             target:
               entity_id: "{{ automation_state_entity }}"
             data:
               value: >
                 {% set new_automation_state = (automation_state | combine({ state_notification_about_start_sent: true })) %}
-                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                             
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
 
-      # ✅ Case 2: Run completed
+      # -----------------------------------------------------------------------
+      # CASE 2: Cycle Completed
+      # -----------------------------------------------------------------------
+      # Triggered when: Device stops running after cycle was started
+      # Action: Send completion notification and reset all state flags
       - conditions:
           - condition: template
             value_template: >
-              {{ not is_running 
-              and automation_state.get(state_notification_about_start_sent, false) 
+              {{ not is_running
+              and automation_state.get(state_notification_about_start_sent, false)
               and (states(run_state_sensor) in [run_state_completion_id, 'unknown', '-'] or states(remaining_time_sensor) in ['unknown', '-']) }}
         sequence:
-        
+          # Send completion notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
               message: >
-                🟢 {{ device_name }}: завершено. Не забудьте достать вещи!        
-        
-          # Reset the state.
+                🟢 {{ device_name }}: завершено. Не забудьте достать вещи!
+
+          # Reset all notification flags for next cycle
           - service: input_text.set_value
             target:
               entity_id: "{{ automation_state_entity }}"
             data:
               value: >
-                {% set new_automation_state = (automation_state | combine({ state_notification_about_renaming_time_sent: false, state_notification_about_start_sent: false, state_notification_about_preparation_sent: false })) %}
+                {% set new_automation_state = (automation_state | combine({
+                  state_notification_about_remaining_time_sent: false,
+                  state_notification_about_start_sent: false,
+                  state_notification_about_preparation_sent: false
+                })) %}
                 {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
 
-      # ✅ Case 3: Preparation
+      # -----------------------------------------------------------------------
+      # CASE 3: Preparation Mode Started
+      # -----------------------------------------------------------------------
+      # Triggered when: Device enters preparation state (e.g., dryer heating)
+      # Action: Send preparation notification
       - conditions:
           - condition: template
             value_template: >
-                {{ preparation_state_id != ''
-                and states(run_state_sensor) == preparation_state_id
-                and not automation_state.get(state_notification_about_preparation_sent, false) }}
+              {{ preparation_state_id != ''
+              and states(run_state_sensor) == preparation_state_id
+              and not automation_state.get(state_notification_about_preparation_sent, false) }}
         sequence:
-        
-          # Reset the state.
+          # Mark preparation notification as sent (before sending to prevent duplicates)
           - service: input_text.set_value
             target:
               entity_id: "{{ automation_state_entity }}"
             data:
               value: >
                 {% set new_automation_state = (automation_state | combine({ state_notification_about_preparation_sent: true })) %}
-                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}        
-        
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+
+          # Send preparation notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
@@ -320,13 +474,22 @@ action:
               message: >
                 ⚙️ {{ device_name }}: подготовка активирована!
 
-      # 🔴 Case 4: Error message
+      # -----------------------------------------------------------------------
+      # CASE 4: Error Occurred
+      # -----------------------------------------------------------------------
+      # Triggered when: Error message sensor changes to non-empty value
+      # Action: Send error notification with details
       - conditions:
           - condition: template
-            value_template: "{{ trigger.entity_id == error_message_sensor and error|length > 0 }}"
+            value_template: >
+              {{ trigger.entity_id == error_message_sensor
+              and states(error_message_sensor) not in ['', 'unknown', 'unavailable', 'none', '-']
+              and states(error_message_sensor) | length > 0 }}
         sequence:
           - variables:
               error: "{{ states(error_message_sensor) }}"
+
+          # Send error notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
@@ -334,36 +497,49 @@ action:
               message: >
                 ⚠️ {{ device_name }}: ошибка. Детали: {{ error }}. Для более подробной информации обратитесь к приложению LG ThinQ.
 
-      # ⏰ Case 5: Notify before end
+      # -----------------------------------------------------------------------
+      # CASE 5: Almost Done (Time-to-End Notification)
+      # -----------------------------------------------------------------------
+      # Triggered when: Remaining time drops below threshold
+      # Action: Send "almost done" notification
       - conditions:
           - condition: template
             value_template: >
-              {% if not automation_state.get(state_notification_about_renaming_time_sent, false) and is_running %}
-                {{ remaining_time_in_minutes <= notify_time_to_end }}
-              {% else %}
-                {{ false }}
-              {% endif %}
+              {{ not automation_state.get(state_notification_about_remaining_time_sent, false)
+              and is_running
+              and remaining_time_in_minutes <= notify_time_to_end
+              and remaining_time_in_minutes > 0 }}
         sequence:
+          # Mark time-to-end notification as sent
           - service: input_text.set_value
             target:
               entity_id: "{{ automation_state_entity }}"
             data:
               value: >
-                {% set new_automation_state = (automation_state | combine({ state_notification_about_renaming_time_sent: true })) %}
-                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                         
-        
+                {% set new_automation_state = (automation_state | combine({ state_notification_about_remaining_time_sent: true })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+
+          # Send "almost done" notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
               message: >
-                🟢 {{ device_name }}: завершение через {{ remaining.split(':')[1] }} минут.
-                
-      # 🔴 Case 6: Tub clean notification
+                🟢 {{ device_name }}: завершение через {{ remaining.split(':')[1] | int }} минут.
+
+      # -----------------------------------------------------------------------
+      # CASE 6: Tub Cleaning Reminder
+      # -----------------------------------------------------------------------
+      # Triggered when: Tub clean counter exceeds threshold
+      # Action: Send tub cleaning reminder
       - conditions:
           - condition: template
-            value_template: "{{ trigger.entity_id == tub_clean_counter_sensor and tub_clean_counter_threshold != 0 and (states(tub_clean_counter_sensor) | int) > tub_clean_counter_threshold }}"
+            value_template: >
+              {{ trigger.entity_id == tub_clean_counter_sensor
+              and tub_clean_counter_threshold != 0
+              and (states(tub_clean_counter_sensor) | int(0)) > tub_clean_counter_threshold }}
         sequence:
+          # Send tub cleaning reminder
           - service: notify.send_message
             target:
               entity_id: !input notify_target
@@ -371,4 +547,4 @@ action:
               message: >
                 ⚠️ {{ device_name }}: внимание. Необходима чистка барабана.
                 Число стирок: {{ states(tub_clean_counter_sensor) | int }}.
-                Допустимый предел: {{ tub_clean_counter_threshold }}.       
+                Допустимый предел: {{ tub_clean_counter_threshold }}.

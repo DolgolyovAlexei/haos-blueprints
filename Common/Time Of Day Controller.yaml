@@ -1,78 +1,192 @@
+# =============================================================================
+# Time of Day State Machine Blueprint
+# =============================================================================
+# This blueprint automatically updates an input_select based on time-of-day
+# thresholds. Useful for managing different modes throughout the day
+# (morning, afternoon, evening, night, etc.).
+#
+# How It Works:
+# - Define states (e.g., "Morning", "Afternoon", "Evening", "Night")
+# - Define corresponding time thresholds for each state
+# - The blueprint sets the input_select to the appropriate state based on
+#   current time
+#
+# Index Mapping:
+# States and times are mapped by index position:
+# - states[0] activates at times[0]
+# - states[1] activates at times[1]
+# - etc.
+#
+# Supported Time Formats:
+# - input_datetime entities (time-only: HH:MM:SS)
+# - Sensor entities reporting time strings (e.g., sun.sun next_rising attribute)
+#
+# Example Configuration:
+# - States: ["Night", "Morning", "Afternoon", "Evening"]
+# - Times: [00:00, 06:00, 12:00, 18:00]
+# - At 14:30, the state would be "Afternoon" (last threshold passed)
+# =============================================================================
+
 blueprint:
-  name: Time of Day State Machine (with Sensors)
+  name: "Custom: Time of Day State Machine"
   description: >
-    Map a list of time-of-day states (input_select options) to a list of time entities or sensors.
-    At each threshold, set the input_select to the corresponding state.
-    Index-to-index mapping is guaranteed (state[0] ↔ time[0], state[1] ↔ time[1], etc).
-    Times can be input_datetime or sensors reporting HH:MM[:SS] values (e.g. sunset).
+    Automatically sets an input_select based on time-of-day thresholds.
+    Maps states to times by index (state[0] ↔ time[0], state[1] ↔ time[1], etc.).
+    Supports input_datetime entities and sensors reporting HH:MM[:SS] values.
   domain: automation
 
   input:
+    # -------------------------------------------------------------------------
+    # Output Configuration
+    # -------------------------------------------------------------------------
     tod_select:
-      name: Time of Day selector
-      description: The input_select entity that holds the current time-of-day state
+      name: Time of Day Selector
+      description: >
+        The input_select entity that holds the current time-of-day state.
+        Its options should match the states defined below.
       selector:
         entity:
           domain: input_select
 
+    # -------------------------------------------------------------------------
+    # State/Time Mapping Configuration
+    # -------------------------------------------------------------------------
     tod_states:
-      name: Time of Day states
-      description: Ordered list of state names (must match input_select options)
+      name: Time of Day States
+      description: >
+        Ordered list of state names (must match input_select options exactly).
+        Example: ["Night", "Morning", "Afternoon", "Evening"]
       selector:
         text:
           multiple: true
 
     tod_times:
-      name: Time of Day times/sensors
-      description: Ordered list of input_datetime or sensor entities (same length as states)
+      name: Time of Day Thresholds
+      description: >
+        Ordered list of time entities (same length as states list).
+        Each time defines when the corresponding state becomes active.
+        Supports input_datetime (time-only) or sensor entities.
       selector:
         entity:
+          domain:
+            - input_datetime
+            - sensor
           multiple: true
 
+# Restart mode ensures time changes are processed with fresh calculations
 mode: restart
 
+# =============================================================================
+# Triggers
+# =============================================================================
 trigger:
-  # Trigger whenever any time-of-day entity changes
+  # Re-evaluate when any time threshold entity changes (e.g., sunset time updates)
   - platform: state
     entity_id: !input tod_times
-  # Also trigger every minute to re-evaluate
+    id: "time_entity_changed"
+
+  # Re-evaluate every minute to catch time threshold crossings
   - platform: time_pattern
     minutes: "/1"
+    id: "minute_tick"
 
+# =============================================================================
+# Variables
+# =============================================================================
 variables:
+  # Input references
   states: !input tod_states
   times: !input tod_times
   tod_select: !input tod_select
 
-  # Convert each entity state into seconds since midnight
+  # Convert each time entity state into seconds since midnight
+  # Handles both input_datetime (HH:MM:SS) and sensor entities
   thresholds: >
-    {% set out = [] %}
+    {% set ns = namespace(out=[]) %}
     {% for t in times %}
-      {% set val = states(t) | as_datetime %}
+      {% set raw = states(t) %}
+      {% set val = raw | as_datetime %}
       {% if val is not none %}
-        {% set sec = dt.hour * 3600 + dt.minute * 60 + dt.second %}
-        {% set out = out + [sec] %}
+        {# as_datetime succeeded - extract time components #}
+        {% set sec = val.hour * 3600 + val.minute * 60 + val.second %}
+        {% set ns.out = ns.out + [sec] %}
+      {% else %}
+        {# Try parsing as HH:MM:SS or HH:MM string #}
+        {% set parts = raw.split(':') %}
+        {% if parts | length >= 2 %}
+          {% set h = parts[0] | int(0) %}
+          {% set m = parts[1] | int(0) %}
+          {% set s = parts[2] | int(0) if parts | length > 2 else 0 %}
+          {% set sec = h * 3600 + m * 60 + s %}
+          {% set ns.out = ns.out + [sec] %}
+        {% else %}
+          {# Fallback: use 0 (midnight) if parsing fails #}
+          {% set ns.out = ns.out + [0] %}
+        {% endif %}
       {% endif %}
     {% endfor %}
-    {{ out }}
+    {{ ns.out }}
 
+  # Current time in seconds since midnight
   now_sec: >
     {% set n = now() %}
     {{ n.hour * 3600 + n.minute * 60 + n.second }}
 
-  # Find the correct index based on current time
+  # Find the index of the current state based on time
+  # Logic: Find the last threshold that current time has passed
   current_index: >
-    {% set idx = 0 %}
-    {% for i in range(thresholds|length) %}
+    {% set ns = namespace(idx=0) %}
+    {% for i in range(thresholds | length) %}
       {% if now_sec >= thresholds[i] %}
-        {% set idx = i %}
+        {% set ns.idx = i %}
       {% endif %}
     {% endfor %}
-    {{ idx }}
+    {{ ns.idx }}
 
-  current_state: "{{ states[current_index] }}"
+  # The state name corresponding to current time
+  current_state: "{{ states[current_index] if current_index < states | length else states[0] }}"
 
+  # Current state of the input_select (for comparison)
+  existing_state: "{{ states(tod_select) }}"
+
+  # Debug flag - set to true to enable persistent notifications for troubleshooting
+  is_debug: false
+
+# =============================================================================
+# Condition - Only proceed if state actually needs to change
+# =============================================================================
+condition:
+  - condition: template
+    value_template: "{{ current_state != existing_state }}"
+
+# =============================================================================
+# Actions
+# =============================================================================
 action:
+  # ---------------------------------------------------------------------------
+  # Debug Logging (optional)
+  # ---------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Time of Day Debug"
+              message: >
+                Current time: {{ now().strftime('%H:%M:%S') }} ({{ now_sec }}s)
+
+                Thresholds: {{ thresholds }}
+                States: {{ states }}
+
+                Current index: {{ current_index }}
+                Current state: {{ current_state }}
+                Existing state: {{ existing_state }}
+
+  # ---------------------------------------------------------------------------
+  # Update Time of Day State
+  # ---------------------------------------------------------------------------
   - service: input_select.select_option
     target:
       entity_id: "{{ tod_select }}"

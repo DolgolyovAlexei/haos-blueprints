@@ -1,63 +1,124 @@
+# =============================================================================
+# Climate Device Controller Blueprint for Home Assistant
+# =============================================================================
+# This blueprint controls climate devices (heaters, AC, humidifiers, etc.)
+# based on environmental sensors, window/door states, and schedules.
+#
+# Features:
+#   - Automatic on/off based on target value (temperature, humidity, etc.)
+#   - Window/door sensor integration (turns off when open for efficiency)
+#   - Decay duration (waits before reacting to door/window changes)
+#   - Emergency threshold (forces device ON below critical value)
+#   - Schedule support (only runs during scheduled times)
+#   - Power monitoring (detects device malfunction)
+#   - House-wide and room-specific window/door sensors
+#
+# Control Logic (in priority order):
+#   1. If value is below emergency threshold → FORCE ON (override all)
+#   2. If control switch is OFF → FORCE OFF
+#   3. If (house OR room is sealed) AND schedule active AND value below target → ON
+#   4. Otherwise → OFF
+#
+# Window/Door Logic:
+#   - "House closed" = ALL house windows are closed (for decay duration)
+#   - "Room closed" = ALL room windows AND doors are closed (for decay duration)
+#   - Device can run if EITHER house OR room is fully closed
+#
+# Power Monitoring:
+#   - If device is ON but power consumption is below threshold for
+#     decay duration, it's flagged as problematic (possible malfunction)
+#
+# Requirements:
+#   - Device switch entity to control
+#   - Control switch (master enable/disable)
+#   - Environment sensor(s) for current value
+#   - Target value entity (input_number)
+#
+# Author: Custom Blueprint
+# =============================================================================
+
 blueprint:
   name: "Custom: Climate Device Control"
   description: >
-    Controls device based on window/door sensors with decay duration
-    and current_valueerature threshold.
+    Controls climate device based on window/door sensors with decay duration
+    and value threshold for temperature, humidity, or other environmental control.
   domain: automation
+
+  # ===========================================================================
+  # INPUT CONFIGURATION
+  # ===========================================================================
   input:
+
+    # -------------------------------------------------------------------------
+    # General Settings
+    # -------------------------------------------------------------------------
     primary_group:
       name: "General"
       collapsed: false
       input:
         device_switch:
           name: Device Switch
-          description: Switch associated with device
+          description: "Switch entity that controls the climate device (heater, AC, humidifier, etc.)"
           selector:
             entity:
               domain: switch
-              
+
         control_switch:
           name: Control Switch
-          description: Controls if the device can work or not
+          description: >
+            Master switch that enables/disables this automation.
+            When OFF, the device will be turned off regardless of other conditions.
           selector:
             entity:
-              domain: 
-                - binary_sensor      
+              domain:
+                - binary_sensor
                 - input_boolean
-            
+
+    # -------------------------------------------------------------------------
+    # Doors & Windows Configuration
+    # -------------------------------------------------------------------------
     doors_group:
       name: "Doors & Windows"
       collapsed: false
       input:
         house_windows:
           name: House Window Sensors
-          description: Sensors of whole house
+          description: >
+            Window sensors for the entire house. If ANY is open, device may turn off.
+            Leave empty if not using house-wide window monitoring.
           default: []
           selector:
             entity:
               domain: binary_sensor
               multiple: true
-              
+
         room_windows:
           name: Room Window Sensors
-          description: Window sensors of the device room
+          description: >
+            Window sensors for the room where the device is located.
+            Device can run when room is sealed (all closed).
           default: []
           selector:
             entity:
               domain: binary_sensor
               multiple: true
-              
+
         room_doors:
           name: Room Door Sensors
-          description: Door sensors of the device room
+          description: >
+            Door sensors for the room where the device is located.
+            Combined with room windows to determine if room is sealed.
           default: []
           selector:
             entity:
               domain: binary_sensor
               multiple: true
-          
+
         decay_duration:
           name: Decay Duration (seconds)
+          description: >
+            Time to wait after a door/window state change before reacting.
+            Prevents toggling when briefly opening doors.
           default: 3
           selector:
             number:
@@ -65,298 +126,402 @@ blueprint:
               max: 600
               unit_of_measurement: seconds
               mode: slider
-              
+
+    # -------------------------------------------------------------------------
+    # Environment Sensors & Target
+    # -------------------------------------------------------------------------
     env_group:
       name: "Environment"
       collapsed: false
-      input:              
+      input:
         env_sensors:
-          name: Room Value Sensors
-          description: Sensors that controls room value
+          name: Environment Sensors
+          description: >
+            Sensors that measure the current environmental value
+            (temperature, humidity, etc.) in the room.
           default: []
           selector:
             entity:
               domain: sensor
               multiple: true
-          
+
         target_value_entity:
           name: Target Value Entity
-          description: Entity (e.g. input_number) that defines target value dynamically. 
+          description: >
+            Entity (e.g., input_number) that defines the target value.
+            Device turns ON when sensor value is below this target.
           selector:
             entity:
-              domain: input_number 
-              
+              domain: input_number
+
         value_threshold:
-          name: Value Threshold
-          description: If value falls below the threshold then device will be turned on (not taking into account other conditions)
+          name: Emergency Threshold
+          description: >
+            If ANY sensor value falls below this threshold, device will be
+            FORCED ON regardless of other conditions (emergency override).
+            Set to 0 to disable this feature.
           default: 0
           selector:
             number:
               min: 0
               max: 100
               mode: slider
-              
+
         value_is_low_entity:
-          name: "Low Value Entity (optional)"
-          description: The entity will contain state of low value
+          name: "Low Value Indicator Entity (optional)"
+          description: >
+            Optional input_boolean that will be turned ON when value is
+            below the emergency threshold. Useful for dashboard indicators.
           default: null
           selector:
             entity:
               domain:
                 - input_boolean
 
+    # -------------------------------------------------------------------------
+    # Schedule Configuration
+    # -------------------------------------------------------------------------
     schedule_group:
       name: "Schedules"
       collapsed: false
       input:
         schedule_entities:
           name: Schedules (optional)
-          description: One or more schedule entities that define when device may run. Leave empty for always.
+          description: >
+            Schedule entities that define when the device may run.
+            Device only operates when ANY schedule is active (ON).
+            Leave empty to allow running at any time.
           default: []
           selector:
             entity:
               domain: schedule
               multiple: true
-              
+
+    # -------------------------------------------------------------------------
+    # Power Monitoring
+    # -------------------------------------------------------------------------
     power_group:
       name: "Power"
       collapsed: false
       input:
         power_sensor:
           name: Power Sensor
-          description: Sensor reporting device power usage (W)
+          description: "Sensor reporting device power consumption (W)"
           selector:
             entity:
               domain: sensor
-    
+
         power_threshold:
           name: Power Threshold (W)
-          description: Below this value, device is considered as problematic
+          description: >
+            If device is ON but power consumption is below this value,
+            it may indicate a malfunction (e.g., heater element failure).
           default: 10
           selector:
             number:
               min: 0
               max: 50
-              unit_of_measurement: "W"   
-              
+              unit_of_measurement: "W"
+
         power_decay_duration:
           name: Power Decay Duration (s)
-          description: Time to wait after power is changed before entering problematic power mode.
+          description: >
+            Time to wait after power reading changes before flagging
+            as problematic. Prevents false alarms during startup.
           default: 10
           selector:
             number:
               min: 1
               max: 50
-              unit_of_measurement: "s"                 
-              
+              unit_of_measurement: "s"
+
         power_problematic_indicator_entity:
-          name: Indicator Entity (optional)
-          description: "If step then the automation with toggle the entity whenever the device enters power problematic state"
+          name: Power Problem Indicator Entity (optional)
+          description: >
+            Optional input_boolean that will be turned ON when the device
+            appears to be malfunctioning (ON but low power consumption).
           default: null
           selector:
             entity:
-              domain: input_boolean              
+              domain: input_boolean
 
+# =============================================================================
+# AUTOMATION MODE
+# =============================================================================
+# Single mode prevents multiple simultaneous executions
 mode: single
 
+# =============================================================================
+# TRIGGERS
+# =============================================================================
 trigger:
-  # Control switch
+  # Control switch state changed
   - platform: state
     entity_id: !input control_switch
 
-  # House window
+  # House window sensor changed (with decay delay)
   - platform: state
     entity_id: !input house_windows
     for:
       seconds: !input decay_duration
-      
-  # Room window
+
+  # Room window sensor changed (with decay delay)
   - platform: state
     entity_id: !input room_windows
     for:
-      seconds: !input decay_duration   
-      
-  # Room door
+      seconds: !input decay_duration
+
+  # Room door sensor changed (with decay delay)
   - platform: state
     entity_id: !input room_doors
     for:
-      seconds: !input decay_duration    
-    
-  # Target value entity
+      seconds: !input decay_duration
+
+  # Target value changed
   - platform: state
-    entity_id: !input target_value_entity    
-    
-  # Room env sensor
+    entity_id: !input target_value_entity
+
+  # Environment sensor value changed
   - platform: state
     entity_id: !input env_sensors
-  
-  # Power sensor
+
+  # Power sensor dropped below threshold (potential malfunction)
   - platform: numeric_state
     entity_id: !input power_sensor
     below: !input power_threshold
     for:
-      seconds: !input power_decay_duration    
+      seconds: !input power_decay_duration
 
+# =============================================================================
+# CONDITIONS
+# =============================================================================
 condition: []
 
+# =============================================================================
+# ACTIONS
+# =============================================================================
 action:
   - variables:
+      # -----------------------------------------------------------------------
+      # Input Variables
+      # -----------------------------------------------------------------------
       env_sensors: !input env_sensors
       control_switch: !input control_switch
       device_switch: !input device_switch
       threshold: !input value_threshold
       value_is_low_entity: !input value_is_low_entity
-      
-      # Target value.
-      target_value_entity: !input target_value_entity      
-      target_value: "{{ states(target_value_entity) | int }}"
-      
-      # Values/threshold
+
+      # -----------------------------------------------------------------------
+      # Target Value
+      # -----------------------------------------------------------------------
+      target_value_entity: !input target_value_entity
+      target_value: "{{ states(target_value_entity) | float(0) }}"
+
+      # -----------------------------------------------------------------------
+      # Value Statistics
+      # -----------------------------------------------------------------------
+      # Calculate how many sensors are below threshold and target
+      # Returns: [count_below_threshold, count_below_target]
       value_stats: >
         {% set result = [] %}
         {% if env_sensors | length > 0 %}
-          {% set values = expand(env_sensors) | map(attribute='state') | map('float') | list %}
+          {% set values = expand(env_sensors) | map(attribute='state') | map('float', default=0) | list %}
+          {# Count sensors below emergency threshold #}
           {% if threshold != 0 %}
             {% set result = result + [values | select('lt', threshold) | list | count] %}
           {% else %}
             {% set result = result + [0] %}
           {% endif %}
-
+          {# Count sensors below target value #}
           {% if target_value != 0 %}
             {% set result = result + [values | select('lt', target_value) | list | count] %}
           {% else %}
             {% set result = result + [0] %}
           {% endif %}
-
         {% else %}
           {% set result = [0, 0] %}
         {% endif %}
         {{ result }}
+
+      # True if ANY sensor is below the emergency threshold
       is_value_below_threshold: "{{ (value_stats[0] | int) > 0 }}"
+      # True if ANY sensor is below the target value
       is_value_below_target_value: "{{ (value_stats[1] | int) > 0 }}"
-      
-      # Power
+
+      # -----------------------------------------------------------------------
+      # Power Monitoring
+      # -----------------------------------------------------------------------
       power_threshold: !input power_threshold
       power_sensor: !input power_sensor
       power_problematic_indicator_entity: !input power_problematic_indicator_entity
       power_decay_duration: !input power_decay_duration
       power: "{{ states(power_sensor) | float(0) }}"
+      # Device is problematic if it's consuming power but below threshold
       is_power_not_ok: "{{ (power > 0 and power < power_threshold) if power_threshold != 0 else false }}"
-      
-      # doors/windows
+
+      # -----------------------------------------------------------------------
+      # Window/Door State
+      # -----------------------------------------------------------------------
       house_windows: !input house_windows
       room_windows: !input room_windows
-      room_doors: !input room_doors      
+      room_doors: !input room_doors
       decay: !input decay_duration
+
+      # Check if ALL house windows are closed (for decay duration)
       house_closed: >
-        {% set ns = namespace(res = true) %}
-        {% for i in range(house_windows | count) %}
-          {% set it = house_windows[i] %}
-          {% set ns.res = ns.res and (is_state(it, 'off') and (now() - states[it].last_changed).total_seconds() > decay) %}
-        {% endfor %}
-        {{ ns.res }}
-      room_closed: >
-        {% if (room_windows | count) or (room_doors | count) == 0 %}
+        {% if house_windows | length == 0 %}
           {{ false }}
         {% else %}
           {% set ns = namespace(res = true) %}
-          {% for i in range(room_windows | count) %}
-            {% set it = room_windows[i] %}
-            {% set ns.res = ns.res and (is_state(it, 'off') and (now() - states[it].last_changed).total_seconds() > decay) %}
+          {% for it in house_windows %}
+            {% set time_closed = (now() - states[it].last_changed).total_seconds() %}
+            {% set ns.res = ns.res and (is_state(it, 'off') and time_closed > decay) %}
           {% endfor %}
-          {% for i in range(room_doors | count) %}
-            {% set it = room_doors[i] %}
-            {% set ns.res = ns.res and (is_state(it, 'off') and (now() - states[it].last_changed).total_seconds() > decay) %}
-          {% endfor %}        
-          {{ ns.res }}     
+          {{ ns.res }}
         {% endif %}
 
-      # Schedules
+      # Check if ALL room windows AND doors are closed (for decay duration)
+      # BUG FIX: Original had wrong operator precedence in condition
+      room_closed: >
+        {% set window_count = room_windows | length %}
+        {% set door_count = room_doors | length %}
+        {% if window_count == 0 and door_count == 0 %}
+          {{ false }}
+        {% else %}
+          {% set ns = namespace(res = true) %}
+          {# Check all room windows #}
+          {% for it in room_windows %}
+            {% set time_closed = (now() - states[it].last_changed).total_seconds() %}
+            {% set ns.res = ns.res and (is_state(it, 'off') and time_closed > decay) %}
+          {% endfor %}
+          {# Check all room doors #}
+          {% for it in room_doors %}
+            {% set time_closed = (now() - states[it].last_changed).total_seconds() %}
+            {% set ns.res = ns.res and (is_state(it, 'off') and time_closed > decay) %}
+          {% endfor %}
+          {{ ns.res }}
+        {% endif %}
+
+      # -----------------------------------------------------------------------
+      # Schedule Check
+      # -----------------------------------------------------------------------
       schedule_entities: !input schedule_entities
+      # True if any schedule is active, or if no schedules are configured
       schedule_active: >
         {% if schedule_entities | length > 0 %}
-          {{ schedule_entities | select('is_state','on') | list | length > 0 }}
+          {{ schedule_entities | select('is_state', 'on') | list | length > 0 }}
         {% else %}
-          true
+          {{ true }}
         {% endif %}
-        
+
+      # -----------------------------------------------------------------------
+      # Debug Flag
+      # -----------------------------------------------------------------------
       is_debug: false
 
-  # Debug message
+  # ---------------------------------------------------------------------------
+  # DEBUG: Log current state
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions: "{{ is_debug }}"
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Climate (debug)"
+              title: "Climate Controller (debug)"
               message: >
                 room_closed = {{ room_closed }},
-                house_closed = {{ house_closed }}
+                house_closed = {{ house_closed }},
+                is_value_below_threshold = {{ is_value_below_threshold }},
+                is_value_below_target_value = {{ is_value_below_target_value }},
+                schedule_active = {{ schedule_active }},
+                control_switch = {{ states(control_switch) }}
 
-  # Power problematic.          
+  # ---------------------------------------------------------------------------
+  # POWER MONITORING: Flag device if malfunctioning
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
             value_template: "{{ is_state(device_switch, 'on') and power_problematic_indicator_entity is not none }}"
         sequence:
           - variables:
+              # Check if enough time has passed since last power reading
               timeout_elapsed: >
                 {% set last = as_timestamp(states[power_sensor].last_changed) %}
                 {{ (as_timestamp(now()) - last) > power_decay_duration }}
-                
+
           - condition: template
             value_template: "{{ timeout_elapsed }}"
-            
+
           - choose:
+              # Power is problematic - flag the indicator
               - conditions: "{{ is_power_not_ok }}"
                 sequence:
                   - service: input_boolean.turn_on
                     target:
                       entity_id: "{{ power_problematic_indicator_entity }}"
+            # Power is OK - clear the indicator
             default:
               - service: input_boolean.turn_off
                 target:
-                  entity_id: "{{ power_problematic_indicator_entity }}"    
+                  entity_id: "{{ power_problematic_indicator_entity }}"
 
-  # `value_is_low_entity` entity control
+  # ---------------------------------------------------------------------------
+  # LOW VALUE INDICATOR: Update the low value indicator entity
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
             value_template: "{{ value_is_low_entity is not none }}"
         sequence:
           - choose:
+              # Value is below threshold - turn on indicator
               - conditions:
                   - condition: template
                     value_template: "{{ is_value_below_threshold }}"
-                sequence: 
+                sequence:
                   - service: input_boolean.turn_on
                     target:
-                      entity_id: !input value_is_low_entity 
-            default: 
+                      entity_id: !input value_is_low_entity
+            # Value is OK - turn off indicator
+            default:
               - service: input_boolean.turn_off
                 target:
-                  entity_id: !input value_is_low_entity  
-                  
+                  entity_id: !input value_is_low_entity
+
+  # ===========================================================================
+  # MAIN CONTROL LOGIC (Priority Order)
+  # ===========================================================================
   - choose:
-      # Value is not ok override
+
+      # -----------------------------------------------------------------------
+      # PRIORITY 1: Emergency Override
+      # -----------------------------------------------------------------------
+      # If value is below emergency threshold, FORCE device ON
       - conditions:
           - condition: template
             value_template: "{{ is_value_below_threshold }}"
         sequence:
           - service: switch.turn_on
             target:
-              entity_id: !input device_switch  
-  
-      # Control is not enabled
+              entity_id: !input device_switch
+
+      # -----------------------------------------------------------------------
+      # PRIORITY 2: Control Switch Off
+      # -----------------------------------------------------------------------
+      # If master control is disabled, FORCE device OFF
       - conditions:
           - condition: template
             value_template: "{{ is_state(control_switch, 'off') }}"
         sequence:
           - service: switch.turn_off
             target:
-              entity_id: !input device_switch      
+              entity_id: !input device_switch
 
-      # Windows/doors closed with decay
+      # -----------------------------------------------------------------------
+      # PRIORITY 3: Normal Operation
+      # -----------------------------------------------------------------------
+      # If environment is sealed AND schedule active AND value needs adjustment
       - conditions:
           - condition: template
             value_template: "{{ (house_closed or room_closed) and schedule_active and is_value_below_target_value }}"
@@ -365,6 +530,10 @@ action:
             target:
               entity_id: !input device_switch
 
+    # -------------------------------------------------------------------------
+    # DEFAULT: Turn device OFF
+    # -------------------------------------------------------------------------
+    # None of the above conditions met - turn off for energy efficiency
     default:
       - service: switch.turn_off
         target:

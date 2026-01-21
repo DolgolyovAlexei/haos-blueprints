@@ -1,103 +1,184 @@
+# =============================================================================
+# Day Scene Controller Blueprint
+# =============================================================================
+# This blueprint automatically activates scenes based on time-of-day state
+# and a control switch. It bridges the Time of Day State Machine with scene
+# activation.
+#
+# How It Works:
+# - Monitors a time-of-day input_select (from Time of Day State Machine)
+# - When control switch is ON: activates the scene matching current time slot
+# - When control switch is OFF: activates the default scene
+# - Optionally applies default scene as transition before switching scenes
+#
+# Index Mapping:
+# Scenes are mapped to time-of-day states by index:
+# - Time state option[0] -> scenes[0]
+# - Time state option[1] -> scenes[1]
+# - etc.
+#
+# Example:
+# - Time of Day options: ["Night", "Morning", "Afternoon", "Evening"]
+# - Scenes: [scene.night, scene.morning, scene.afternoon, scene.evening]
+# - When time is "Morning" and control is ON -> scene.morning activates
+# =============================================================================
+
 blueprint:
   name: "Custom: Day Scene Controller"
-  description: "Allows to control time of day scenes"
+  description: >
+    Automatically activates scenes based on time-of-day state and control switch.
+    Maps scenes to time-of-day options by index. Supports transition scenes and
+    callbacks for custom actions when scenes are applied.
   domain: automation
 
   input:
+    # -------------------------------------------------------------------------
+    # State Configuration
+    # -------------------------------------------------------------------------
     states_group:
       name: States
       collapsed: false
       input:
         time_of_day_state:
-          name: Time of Day state selector
-          description: The input_select entity that holds the current time-of-day state
+          name: Time of Day State Selector
+          description: >
+            The input_select entity that holds the current time-of-day state.
+            Typically managed by the Time of Day State Machine blueprint.
           selector:
             entity:
               domain: input_select
-              
+
         control_switch:
           name: Control Switch
-          description: Controls if scenes switch must work or default scene should be applied
+          description: >
+            When ON: activates the scene matching current time-of-day.
+            When OFF: activates the default scene.
           selector:
             entity:
               domain:
                 - binary_sensor
                 - input_boolean
 
+    # -------------------------------------------------------------------------
+    # Scene Configuration
+    # -------------------------------------------------------------------------
     scenes_group:
       name: Scenes
       collapsed: false
       input:
         scenes:
-          name: Scenes
-          description: Ordered list of scenes (each scene per time of day state list)
+          name: Time-of-Day Scenes
+          description: >
+            Ordered list of scenes matching time-of-day options by index.
+            Must have the same number of scenes as time-of-day options.
           selector:
             entity:
-              domain:
-                - scene
+              domain: scene
               multiple: true
-    
+
         default_scene:
           name: Default Scene
-          description: Scene enabled when enable switch is off
+          description: >
+            Scene activated when control switch is OFF, or used as
+            transition scene between time-of-day scenes.
           selector:
             entity:
-              domain:
-                - scene
-                
+              domain: scene
+
         enable_default_scene_on_transition:
           name: Enable Default Scene On Transition
-          description: Controls if default scene should be enabled on scene transition (i.e. before moving to other scene use default scene)
+          description: >
+            When enabled, applies default scene briefly before switching
+            to the target scene. Creates a smoother transition effect.
           default: true
           selector:
             boolean:
-          
+
+    # -------------------------------------------------------------------------
+    # Callback Actions (Advanced)
+    # -------------------------------------------------------------------------
     actions_group:
       name: Actions
       collapsed: true
-      input:          
+      input:
         scene_applied_callback:
           name: Scene Applied Callback
-          description: Set of action invoked whenever active scene is applied
+          description: >
+            Custom actions to run after a time-of-day scene is applied.
+            Useful for additional automations like notifications.
           default: []
           selector:
             action: {}
-            
+
         default_scene_applied_callback:
           name: Default Scene Applied Callback
-          description: Set of action invoked whenever default scene is applied
+          description: >
+            Custom actions to run after the default scene is applied.
           default: []
           selector:
             action: {}
 
+# Restart mode ensures rapid state changes use latest values
 mode: restart
 
+# =============================================================================
+# Triggers
+# =============================================================================
 trigger:
+  # Time of day state changed (e.g., Morning -> Afternoon)
   - platform: state
     entity_id: !input time_of_day_state
+    id: "time_of_day_changed"
 
+  # Control switch toggled (e.g., user leaving/arriving home)
   - platform: state
     entity_id: !input control_switch
-    
+    id: "control_switch_changed"
+
+# =============================================================================
+# Variables
+# =============================================================================
 variables:
-  # Constants
+  # Debug flag - set to true to enable persistent notifications for troubleshooting
   is_debug: false
 
-  # Declarations
+  # Input references
   control_switch: !input control_switch
   time_of_day_state: !input time_of_day_state
   enable_default_scene_on_transition: !input enable_default_scene_on_transition
-  
-  # Values
-  tod_state: "{{ states(time_of_day_state) }}"
-  tod_options: "{{ state_attr(time_of_day_state, 'options') or [] }}"
-  tod_index: "{{ tod_options.index(tod_state) if tod_state in tod_options else -1 }}"
-  control_on: "{{ states(control_switch) in ['on','true','1'] }}"
   scenes_list: !input scenes
   default_scene: !input default_scene
 
+  # Computed values
+  tod_state: "{{ states(time_of_day_state) }}"
+  tod_state_name: "{{ state_attr(time_of_day_state, 'friendly_name') | default(time_of_day_state) }}"
+  tod_options: "{{ state_attr(time_of_day_state, 'options') or [] }}"
+  tod_index: "{{ tod_options.index(tod_state) if tod_state in tod_options else -1 }}"
+  control_on: "{{ states(control_switch) in ['on', 'true', '1', 'home'] }}"
+  control_switch_name: "{{ state_attr(control_switch, 'friendly_name') | default(control_switch) }}"
+
+  # Validate scenes list has enough entries
+  scenes_valid: "{{ tod_index >= 0 and tod_index < (scenes_list | length) }}"
+
+  # Determine which scene to activate
+  result_scene: >
+    {% if control_on and scenes_valid %}
+      {{ scenes_list[tod_index] }}
+    {% else %}
+      {{ default_scene }}
+    {% endif %}
+  result_scene_name: "{{ state_attr(result_scene, 'friendly_name') | default(result_scene) }}"
+
+  # Check if we're using a time-of-day scene or the default
+  is_tod_scene: "{{ control_on and scenes_valid }}"
+
+# =============================================================================
+# Actions
+# =============================================================================
 action:
-  # Debug info (log if required)
+  # ---------------------------------------------------------------------------
+  # Debug Logging (optional)
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
@@ -105,38 +186,63 @@ action:
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Debug Info"
+              title: "Day Scene Controller Debug"
               message: >
-                tod_index = {{ tod_index }},
-                control_ok = {{ control_ok }}
+                Trigger: {{ trigger.id | default('unknown') }}
+
+                Time of Day: {{ tod_state }} (index: {{ tod_index }})
+                Control Switch: {{ control_switch_name }} = {{ control_on }}
+
+                Scenes list length: {{ scenes_list | length }}
+                Scenes valid: {{ scenes_valid }}
+
+                Result: {{ result_scene_name }} ({{ result_scene }})
+                Is TOD scene: {{ is_tod_scene }}
+
+  # ---------------------------------------------------------------------------
+  # Validate Configuration
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
             value_template: "{{ tod_index == -1 }}"
         sequence:
-            stop: "Scene index is invalid. Check your state-to-scene mapping"
-    default:
+          - stop: "Invalid time-of-day state. Current state not found in options list."
+
+      - conditions:
+          - condition: template
+            value_template: "{{ control_on and not scenes_valid }}"
         sequence:
-          - variables:
-              result_scene: >
-                {% if control_on %}
-                  {{ scenes_list[tod_index] }}
-                {% else %}
-                  {{ default_scene }}
-                {% endif %}
-                
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ enable_default_scene_on_transition and result_scene != default_scene }}"
-                sequence:
-                  - service: scene.turn_on
-                    target:
-                      entity_id: "{{ default_scene }}"             
-                
+          - stop: "Scene index out of range. Ensure scenes list has enough entries for all time-of-day options."
+
+  # ---------------------------------------------------------------------------
+  # Apply Transition Scene (if enabled)
+  # ---------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ enable_default_scene_on_transition and is_tod_scene and result_scene != default_scene }}"
+        sequence:
           - service: scene.turn_on
             target:
-              entity_id: "{{ result_scene }}"           
-          
-          
+              entity_id: "{{ default_scene }}"
 
+  # ---------------------------------------------------------------------------
+  # Apply Target Scene
+  # ---------------------------------------------------------------------------
+  - service: scene.turn_on
+    target:
+      entity_id: "{{ result_scene }}"
+
+  # ---------------------------------------------------------------------------
+  # Execute Callbacks
+  # ---------------------------------------------------------------------------
+  - choose:
+      # Time-of-day scene callback
+      - conditions:
+          - condition: template
+            value_template: "{{ is_tod_scene }}"
+        sequence: !input scene_applied_callback
+
+    # Default scene callback
+    default: !input default_scene_applied_callback

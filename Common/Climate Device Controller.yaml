@@ -34,7 +34,7 @@
 #   - Environment sensor(s) for current value
 #   - Target value entity (input_number)
 #
-# Author: Custom Blueprint
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

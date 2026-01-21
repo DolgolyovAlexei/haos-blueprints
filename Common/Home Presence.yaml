@@ -1,0 +1,273 @@
+# =============================================================================
+# Home Presence Controller Blueprint
+# =============================================================================
+# This blueprint determines home presence/occupancy based on multiple signals:
+# - Door sensors (temporary presence when door recently opened)
+# - Person/presence entities (tracking if someone is home)
+# - Motion sensors (detecting movement)
+# - Wi-Fi connection (devices connected to home network)
+#
+# The result is stored in an input_boolean helper that other automations
+# can use to determine if someone is likely home.
+# =============================================================================
+
+blueprint:
+  name: "Custom: Home Presence Controller"
+  description: >
+    Determines home presence based on multiple signals including door sensors,
+    person entities, motion sensors, and Wi-Fi connections. Outputs the result
+    to an input_boolean helper for use by other automations.
+  domain: automation
+
+  input:
+    # -------------------------------------------------------------------------
+    # Output Configuration
+    # -------------------------------------------------------------------------
+    result_group:
+      name: Output
+      collapsed: false
+      input:
+        result_value_entity:
+          name: Result Value
+          description: Input boolean helper that will store the presence result (on = home, off = away)
+          selector:
+            entity:
+              domain: input_boolean
+
+        control_switch:
+          name: Control Switch
+          description: Master switch to enable/disable presence detection (gatekeeper)
+          selector:
+            entity:
+              domain:
+                - input_boolean
+                - binary_sensor
+
+    # -------------------------------------------------------------------------
+    # Door Sensor Configuration
+    # -------------------------------------------------------------------------
+    door_group:
+      name: Door
+      collapsed: false
+      input:
+        door_sensors:
+          name: Door Sensor(s)
+          description: Door sensors to monitor for entry/exit detection
+          default: []
+          selector:
+            entity:
+              multiple: true
+              domain: binary_sensor
+              device_class: door
+
+        door_sensor_threshold:
+          name: Door Sensor Duration Threshold
+          description: >
+            Time window after door activity to assume someone might be present.
+            After this duration, presence will be re-evaluated based on other sensors.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 600
+              unit_of_measurement: seconds
+              mode: slider
+
+    # -------------------------------------------------------------------------
+    # Presence Detection Configuration
+    # -------------------------------------------------------------------------
+    presence_group:
+      name: Presence
+      collapsed: false
+      input:
+        presence_sensors:
+          name: Person Entities
+          description: Person entities to monitor for home/away status
+          default: []
+          selector:
+            entity:
+              domain: person
+              multiple: true
+
+        motion_sensors:
+          name: Motion Sensors
+          description: Motion or occupancy sensors to detect movement
+          default: []
+          selector:
+            entity:
+              domain: binary_sensor
+              device_class:
+                - motion
+                - occupancy
+              multiple: true
+
+    # -------------------------------------------------------------------------
+    # Wi-Fi Detection Configuration
+    # -------------------------------------------------------------------------
+    wifi_group:
+      name: Wi-Fi
+      collapsed: false
+      input:
+        wifi_id_sensors:
+          name: Wi-Fi ID Sensors
+          description: Sensors that report the current Wi-Fi network ID (SSID/BSSID)
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              multiple: true
+
+        home_wifi_ids:
+          name: Home Wi-Fi ID(s)
+          description: List of Wi-Fi network IDs that indicate the device is at home
+          default: []
+          selector:
+            text:
+              multiple: true
+
+# Restart mode ensures that if a new trigger occurs while processing,
+# the automation restarts with fresh sensor values
+mode: restart
+
+# =============================================================================
+# Triggers - Events that cause presence to be re-evaluated
+# =============================================================================
+trigger:
+  # Door sensor state changes (opened/closed)
+  - platform: state
+    entity_id: !input door_sensors
+    id: 'door_trigger'
+
+  # Person entity state changes (home/away)
+  - platform: state
+    entity_id: !input presence_sensors
+    id: 'presence_trigger'
+
+  # Motion sensor state changes (detected/clear)
+  - platform: state
+    entity_id: !input motion_sensors
+    id: 'motion_trigger'
+
+  # Control switch toggled (enable/disable detection)
+  - platform: state
+    entity_id: !input control_switch
+    id: 'control_trigger'
+
+  # Wi-Fi sensor state changes (network ID changed)
+  - platform: state
+    entity_id: !input wifi_id_sensors
+    id: 'wifi_trigger'
+
+# =============================================================================
+# Variables - Computed values for presence determination
+# =============================================================================
+variables:
+  # Debug mode flag - set to true to enable persistent notifications
+  is_debug: false
+
+  # Input references (required for use in templates)
+  wifi_id_sensors: !input wifi_id_sensors
+  home_wifi_ids: !input home_wifi_ids
+  control_switch: !input control_switch
+  result_value_entity: !input result_value_entity
+  motion_sensors: !input motion_sensors
+  presence_sensors: !input presence_sensors
+  door_sensors: !input door_sensors
+  door_sensor_threshold: !input door_sensor_threshold
+
+  # Check if any door sensor was activated within the threshold period
+  # This provides a temporary "presence assumed" window when doors are used
+  door_on: >
+    {% set ns = namespace(items=[]) %}
+    {% for s in door_sensors %}
+      {% if states(s) not in ['unknown', 'unavailable']
+         and (now() - states[s].last_changed).total_seconds() < door_sensor_threshold %}
+        {% set ns.items = ns.items + [s] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.items | count > 0 }}
+
+  # Check if any tracked person is currently home
+  presence_on: >
+    {{ (presence_sensors | select('is_state', 'home') | list | length > 0) | bool
+       if presence_sensors | length > 0 else false }}
+
+  # Check if any motion sensor is currently detecting motion
+  motion_on: >
+    {{ (motion_sensors | select('is_state', 'on') | list | length > 0) | bool
+       if motion_sensors | length > 0 else false }}
+
+  # Check if any device is connected to a home Wi-Fi network
+  wifi_on: >
+    {{ expand(wifi_id_sensors)
+       | map(attribute='state')
+       | select('in', home_wifi_ids)
+       | list
+       | length > 0 }}
+
+  # Combined presence check (excluding door) - requires control switch to be on
+  is_on_except_door: "{{ (motion_on or presence_on or wifi_on) and is_state(control_switch, 'on') }}"
+
+  # Final presence determination - door provides temporary override
+  is_on: "{{ is_on_except_door or door_on }}"
+
+# =============================================================================
+# Actions - Update presence state based on computed values
+# =============================================================================
+action:
+  # -------------------------------------------------------------------------
+  # Debug Logging (optional)
+  # -------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Home Presence Debug"
+              message: >
+                Trigger: {{ trigger.id | default('unknown') }}
+
+                Sensor States:
+                - motion_on: {{ motion_on }}
+                - door_on: {{ door_on }}
+                - presence_on: {{ presence_on }}
+                - wifi_on: {{ wifi_on }}
+
+                Combined:
+                - is_on_except_door: {{ is_on_except_door }}
+                - is_on: {{ is_on }}
+
+  # -------------------------------------------------------------------------
+  # Update Result Entity
+  # -------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_on }}"
+        sequence:
+          - service: input_boolean.turn_on
+            target:
+              entity_id: "{{ result_value_entity }}"
+    default:
+      - service: input_boolean.turn_off
+        target:
+          entity_id: "{{ result_value_entity }}"
+
+  # -------------------------------------------------------------------------
+  # Door Sensor Delayed Re-evaluation
+  # -------------------------------------------------------------------------
+  # When triggered by a door sensor and no other presence indicators are active,
+  # wait for the threshold duration then turn off presence.
+  # If another trigger occurs during the delay, the automation restarts (mode: restart)
+  # and re-evaluates with fresh data.
+  - condition: template
+    value_template: "{{ (not is_on_except_door) and trigger.id == 'door_trigger' }}"
+
+  - delay:
+      seconds: "{{ door_sensor_threshold }}"
+
+  - service: input_boolean.turn_off
+    target:
+      entity_id: "{{ result_value_entity }}"

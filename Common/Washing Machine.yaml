@@ -11,6 +11,7 @@
 #   - Error message notifications
 #   - Preparation mode notification (e.g., for dryer prep)
 #   - Tub/drum cleaning reminder based on wash counter
+#   - Fully customizable notification messages (i18n support)
 #
 # State Machine:
 #   The automation tracks the appliance through these states:
@@ -24,13 +25,23 @@
 #   - nart: Notification About Remaining Time Sent
 #   - naps: Notification About Preparation Sent
 #
+# Message Template Variables:
+#   All message templates support Jinja2 templating with these variables:
+#   - {{ device_name }}  - Device name (e.g., "Washing Machine")
+#   - {{ remaining }}    - Remaining time as string (e.g., "01:30:00")
+#   - {{ minutes }}      - Remaining minutes as number (e.g., 90)
+#   - {{ error }}        - Error message text (only in error notification)
+#   - {{ tub_count }}    - Tub clean counter value (only in tub clean notification)
+#   - {{ tub_threshold }}- Tub clean threshold (only in tub clean notification)
+#   - {{ details }}      - Startup details from sensors (only in start notification)
+#
 # Requirements:
 #   - Sensors for: remaining time, run state, error messages
 #   - input_text entity for persistent state storage
 #   - Notification service entity
 #
-# Note: Default values are in Russian for LG ThinQ integration.
-#       Adjust run_state_completion_id and other defaults for your language.
+# Note: Default messages are in Russian for LG ThinQ integration.
+#       Customize messages in the "Messages" section for your language.
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
@@ -126,7 +137,7 @@ blueprint:
       input:
         input_device_name:
           name: "Device Name"
-          description: "Device name used in notification messages"
+          description: "Device name used in notification messages (available as {{ device_name }} in templates)"
           default: "Стиральная машина"
           selector:
             text:
@@ -137,6 +148,75 @@ blueprint:
           selector:
             entity:
               domain: notify
+
+    # -------------------------------------------------------------------------
+    # Message Templates (Customizable Notifications)
+    # -------------------------------------------------------------------------
+    # All messages support Jinja2 templates. Available variables depend on
+    # the notification type - see header comments for full list.
+    messages_group:
+      name: "Messages"
+      collapsed: true
+      input:
+        message_start:
+          name: "Start Message"
+          description: >
+            Message sent when cycle starts.
+            Variables: {{ device_name }}, {{ remaining }}, {{ details }}
+          default: "🧺 {{ device_name }}: старт. Длительность: `{{ remaining }}`.{{ details }}"
+          selector:
+            text:
+              multiline: true
+
+        message_completed:
+          name: "Completed Message"
+          description: >
+            Message sent when cycle completes.
+            Variables: {{ device_name }}
+          default: "🟢 {{ device_name }}: завершено. Не забудьте достать вещи!"
+          selector:
+            text:
+              multiline: true
+
+        message_almost_done:
+          name: "Almost Done Message"
+          description: >
+            Message sent when cycle is about to finish.
+            Variables: {{ device_name }}, {{ minutes }}
+          default: "🟢 {{ device_name }}: завершение через {{ minutes }} минут."
+          selector:
+            text:
+              multiline: true
+
+        message_preparation:
+          name: "Preparation Message"
+          description: >
+            Message sent when device enters preparation mode.
+            Variables: {{ device_name }}
+          default: "⚙️ {{ device_name }}: подготовка активирована!"
+          selector:
+            text:
+              multiline: true
+
+        message_error:
+          name: "Error Message"
+          description: >
+            Message sent when an error occurs.
+            Variables: {{ device_name }}, {{ error }}
+          default: "⚠️ {{ device_name }}: ошибка. Детали: {{ error }}. Для более подробной информации обратитесь к приложению LG ThinQ."
+          selector:
+            text:
+              multiline: true
+
+        message_tub_clean:
+          name: "Tub Clean Reminder Message"
+          description: >
+            Message sent when tub cleaning is needed.
+            Variables: {{ device_name }}, {{ tub_count }}, {{ tub_threshold }}
+          default: "⚠️ {{ device_name }}: внимание. Необходима чистка барабана. Число стирок: {{ tub_count }}. Допустимый предел: {{ tub_threshold }}."
+          selector:
+            text:
+              multiline: true
 
     # -------------------------------------------------------------------------
     # Device Information Sensors
@@ -285,6 +365,16 @@ variables:
   run_state_completion_id: !input run_state_completion_id
 
   # ---------------------------------------------------------------------------
+  # Message Templates
+  # ---------------------------------------------------------------------------
+  message_start_template: !input message_start
+  message_completed_template: !input message_completed
+  message_almost_done_template: !input message_almost_done
+  message_preparation_template: !input message_preparation
+  message_error_template: !input message_error
+  message_tub_clean_template: !input message_tub_clean
+
+  # ---------------------------------------------------------------------------
   # Computed State Values
   # ---------------------------------------------------------------------------
   remaining: "{{ states(remaining_time_sensor) }}"
@@ -388,13 +478,19 @@ action:
           - variables:
               startup_info_sensors: !input startup_info_sensors
               startup_info_texts: !input startup_info_texts
-              # Build notification message with optional sensor details
-              message: >
-                {% set ns = namespace(text = '🧺 ' ~ device_name ~ ': старт. Длительность: `' ~ remaining ~ '`.') %}
+              # Build sensor details string for the {{ details }} placeholder
+              details: >
+                {% set ns = namespace(text = '') %}
                 {% for i in range(startup_info_sensors | count) %}
                   {% set ns.text = ns.text ~ ' ' ~ startup_info_texts[i] ~ ': [' ~ states(startup_info_sensors[i]) ~ '].' %}
                 {% endfor %}
                 {{ ns.text }}
+              # Render the message template with available variables
+              message: >
+                {% set tpl = message_start_template %}
+                {{ tpl | replace('{{ device_name }}', device_name)
+                       | replace('{{ remaining }}', remaining)
+                       | replace('{{ details }}', details) }}
 
           # Send start notification
           - service: notify.send_message
@@ -424,13 +520,18 @@ action:
               and automation_state.get(state_notification_about_start_sent, false)
               and (states(run_state_sensor) in [run_state_completion_id, 'unknown', '-'] or states(remaining_time_sensor) in ['unknown', '-']) }}
         sequence:
+          - variables:
+              # Render the message template with available variables
+              message: >
+                {% set tpl = message_completed_template %}
+                {{ tpl | replace('{{ device_name }}', device_name) }}
+
           # Send completion notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
-              message: >
-                🟢 {{ device_name }}: завершено. Не забудьте достать вещи!
+              message: "{{ message }}"
 
           # Reset all notification flags for next cycle
           - service: input_text.set_value
@@ -466,13 +567,18 @@ action:
                 {% set new_automation_state = (automation_state | combine({ state_notification_about_preparation_sent: true })) %}
                 {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
 
+          - variables:
+              # Render the message template with available variables
+              message: >
+                {% set tpl = message_preparation_template %}
+                {{ tpl | replace('{{ device_name }}', device_name) }}
+
           # Send preparation notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
-              message: >
-                ⚙️ {{ device_name }}: подготовка активирована!
+              message: "{{ message }}"
 
       # -----------------------------------------------------------------------
       # CASE 4: Error Occurred
@@ -488,14 +594,18 @@ action:
         sequence:
           - variables:
               error: "{{ states(error_message_sensor) }}"
+              # Render the message template with available variables
+              message: >
+                {% set tpl = message_error_template %}
+                {{ tpl | replace('{{ device_name }}', device_name)
+                       | replace('{{ error }}', error) }}
 
           # Send error notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
-              message: >
-                ⚠️ {{ device_name }}: ошибка. Детали: {{ error }}. Для более подробной информации обратитесь к приложению LG ThinQ.
+              message: "{{ message }}"
 
       # -----------------------------------------------------------------------
       # CASE 5: Almost Done (Time-to-End Notification)
@@ -519,13 +629,21 @@ action:
                 {% set new_automation_state = (automation_state | combine({ state_notification_about_remaining_time_sent: true })) %}
                 {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
 
+          - variables:
+              # Calculate minutes for the template
+              minutes: "{{ remaining.split(':')[1] | int }}"
+              # Render the message template with available variables
+              message: >
+                {% set tpl = message_almost_done_template %}
+                {{ tpl | replace('{{ device_name }}', device_name)
+                       | replace('{{ minutes }}', minutes | string) }}
+
           # Send "almost done" notification
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
-              message: >
-                🟢 {{ device_name }}: завершение через {{ remaining.split(':')[1] | int }} минут.
+              message: "{{ message }}"
 
       # -----------------------------------------------------------------------
       # CASE 6: Tub Cleaning Reminder
@@ -539,12 +657,19 @@ action:
               and tub_clean_counter_threshold != 0
               and (states(tub_clean_counter_sensor) | int(0)) > tub_clean_counter_threshold }}
         sequence:
+          - variables:
+              tub_count: "{{ states(tub_clean_counter_sensor) | int }}"
+              tub_threshold: "{{ tub_clean_counter_threshold }}"
+              # Render the message template with available variables
+              message: >
+                {% set tpl = message_tub_clean_template %}
+                {{ tpl | replace('{{ device_name }}', device_name)
+                       | replace('{{ tub_count }}', tub_count | string)
+                       | replace('{{ tub_threshold }}', tub_threshold | string) }}
+
           # Send tub cleaning reminder
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
-              message: >
-                ⚠️ {{ device_name }}: внимание. Необходима чистка барабана.
-                Число стирок: {{ states(tub_clean_counter_sensor) | int }}.
-                Допустимый предел: {{ tub_clean_counter_threshold }}.
+              message: "{{ message }}"

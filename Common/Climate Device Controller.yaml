@@ -4,6 +4,13 @@
 # This blueprint controls climate devices (heaters, AC, humidifiers, etc.)
 # based on environmental sensors, window/door states, and schedules.
 #
+# Supports any controllable device type through custom actions:
+#   - Switches (traditional on/off control)
+#   - Climate entities (HVAC, air conditioners)
+#   - Smart remotes (IR/RF commands for AC units)
+#   - Scripts and scenes
+#   - Any other controllable entity
+#
 # Features:
 #   - Automatic on/off based on target value (temperature, humidity, etc.)
 #   - Window/door sensor integration (turns off when open for efficiency)
@@ -29,10 +36,16 @@
 #     decay duration, it's flagged as problematic (possible malfunction)
 #
 # Requirements:
-#   - Device switch entity to control
+#   - Device entity to monitor state (switch, climate, etc.)
+#   - Custom actions for turning device on/off
 #   - Control switch (master enable/disable)
 #   - Environment sensor(s) for current value
 #   - Target value entity (input_number)
+#
+# Device Control Flexibility:
+#   - Supports any controllable device type via custom actions
+#   - Examples: switches, climate entities, smart remotes, scripts, scenes
+#   - Define your own turn_on and turn_off actions for maximum flexibility
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
@@ -40,8 +53,10 @@
 blueprint:
   name: "Custom: Climate Device Control"
   description: >
-    Controls climate device based on window/door sensors with decay duration
+    Controls climate devices based on window/door sensors with decay duration
     and value threshold for temperature, humidity, or other environmental control.
+    Supports any device type (switches, climate entities, smart remotes, etc.)
+    through customizable turn on/off actions.
   domain: automation
 
   # ===========================================================================
@@ -56,12 +71,44 @@ blueprint:
       name: "General"
       collapsed: false
       input:
-        device_switch:
-          name: Device Switch
-          description: "Switch entity that controls the climate device (heater, AC, humidifier, etc.)"
+        device_entity:
+          name: Device Entity
+          description: >
+            Entity used to monitor the device state (on/off).
+            Can be a switch, climate entity, or any entity with on/off states.
+            This is used for power monitoring and state checks.
           selector:
             entity:
-              domain: switch
+              domain:
+                - switch
+                - climate
+                - fan
+                - light
+                - input_boolean
+
+        turn_on_action:
+          name: Turn On Action
+          description: >
+            Action to execute when the device should be turned ON.
+            Examples:
+              - For switch: switch.turn_on with entity_id
+              - For climate: climate.turn_on or climate.set_hvac_mode
+              - For smart remote: remote.send_command with your IR/RF code
+              - For script: script.turn_on
+          selector:
+            action: {}
+
+        turn_off_action:
+          name: Turn Off Action
+          description: >
+            Action to execute when the device should be turned OFF.
+            Examples:
+              - For switch: switch.turn_off with entity_id
+              - For climate: climate.turn_off or climate.set_hvac_mode to 'off'
+              - For smart remote: remote.send_command with your IR/RF code
+              - For script: script.turn_on (for off script)
+          selector:
+            action: {}
 
         control_switch:
           name: Control Switch
@@ -307,7 +354,7 @@ action:
       # -----------------------------------------------------------------------
       env_sensors: !input env_sensors
       control_switch: !input control_switch
-      device_switch: !input device_switch
+      device_entity: !input device_entity
       threshold: !input value_threshold
       value_is_low_entity: !input value_is_low_entity
 
@@ -439,10 +486,12 @@ action:
   # ---------------------------------------------------------------------------
   # POWER MONITORING: Flag device if malfunctioning
   # ---------------------------------------------------------------------------
+  # Note: For climate entities, 'on' state check works for most HVAC modes.
+  # For entities that don't use 'on' state, power monitoring may need adjustment.
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ is_state(device_switch, 'on') and power_problematic_indicator_entity is not none }}"
+            value_template: "{{ states(device_entity) not in ['off', 'unavailable', 'unknown'] and power_problematic_indicator_entity is not none }}"
         sequence:
           - variables:
               # Check if enough time has passed since last power reading
@@ -501,10 +550,7 @@ action:
       - conditions:
           - condition: template
             value_template: "{{ is_value_below_threshold }}"
-        sequence:
-          - service: switch.turn_on
-            target:
-              entity_id: !input device_switch
+        sequence: !input turn_on_action
 
       # -----------------------------------------------------------------------
       # PRIORITY 2: Control Switch Off
@@ -513,10 +559,7 @@ action:
       - conditions:
           - condition: template
             value_template: "{{ is_state(control_switch, 'off') }}"
-        sequence:
-          - service: switch.turn_off
-            target:
-              entity_id: !input device_switch
+        sequence: !input turn_off_action
 
       # -----------------------------------------------------------------------
       # PRIORITY 3: Normal Operation
@@ -525,16 +568,10 @@ action:
       - conditions:
           - condition: template
             value_template: "{{ (house_closed or room_closed) and schedule_active and is_value_below_target_value }}"
-        sequence:
-          - service: switch.turn_on
-            target:
-              entity_id: !input device_switch
+        sequence: !input turn_on_action
 
     # -------------------------------------------------------------------------
     # DEFAULT: Turn device OFF
     # -------------------------------------------------------------------------
     # None of the above conditions met - turn off for energy efficiency
-    default:
-      - service: switch.turn_off
-        target:
-          entity_id: !input device_switch
+    default: !input turn_off_action

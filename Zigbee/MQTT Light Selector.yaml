@@ -4,6 +4,8 @@
 # Cycles through a list of lights using MQTT button events (up/down/remind).
 # The selected light flashes to provide visual feedback, then returns to its
 # original state. Selection is persisted in an input_text helper.
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

@@ -20,6 +20,8 @@
 # Callback Data Format:
 # Each button sends callback data: /<keyboard_id>_<button_index>
 # Example: /my_keyboard_0 for first button of keyboard "my_keyboard"
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

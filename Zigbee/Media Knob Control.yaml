@@ -3,6 +3,8 @@
 # =============================================================================
 # Controls a media player using an MQTT-connected rotary encoder/knob.
 # Supports customizable action IDs to work with various MQTT devices.
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

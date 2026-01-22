@@ -20,6 +20,8 @@
 # The blueprint assumes sensors follow the pattern: sensor.<name>_power
 # and the corresponding switch is: switch.<name>
 # Example: sensor.coffee_maker_power -> switch.coffee_maker
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

@@ -21,6 +21,8 @@
 # - Time of Day options: ["Night", "Morning", "Afternoon", "Evening"]
 # - Scenes: [scene.night, scene.morning, scene.afternoon, scene.evening]
 # - When time is "Morning" and control is ON -> scene.morning activates
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

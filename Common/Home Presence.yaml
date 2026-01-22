@@ -9,6 +9,8 @@
 #
 # The result is stored in an input_boolean helper that other automations
 # can use to determine if someone is likely home.
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

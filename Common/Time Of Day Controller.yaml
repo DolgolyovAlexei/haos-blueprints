@@ -25,6 +25,8 @@
 # - States: ["Night", "Morning", "Afternoon", "Evening"]
 # - Times: [00:00, 06:00, 12:00, 18:00]
 # - At 14:30, the state would be "Afternoon" (last threshold passed)
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

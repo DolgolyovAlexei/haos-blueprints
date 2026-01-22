@@ -19,6 +19,8 @@
 # - Commands: ["/status", "/lights_on", "/lights_off", "/arm"]
 # - Answers: ["Status checked", "Lights turned on", "Lights turned off", "Alarm armed"]
 # - Each command has its own callback action
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

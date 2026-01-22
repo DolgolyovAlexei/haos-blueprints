@@ -34,7 +34,7 @@
 #   - input_text entity for persistent state storage
 #   - Target light and/or switch to control
 #
-# Author: Custom Blueprint
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

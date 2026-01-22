@@ -10,6 +10,8 @@
 # - Debounce timer to prevent false alarms from brief sensor triggers
 # - Optional melody and volume selection for alarm devices
 # - Automatic alarm turn-off when all sensors clear
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
 blueprint:

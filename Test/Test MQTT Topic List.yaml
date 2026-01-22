@@ -1,3 +1,17 @@
+# =============================================================================
+# MQTT Multi-Topic Listener Blueprint (Test)
+# =============================================================================
+# A simple test blueprint that listens to multiple MQTT topics and creates
+# persistent notifications when messages are received on matching topics.
+#
+# Use Cases:
+# - Debugging MQTT message flow
+# - Testing topic subscriptions
+# - Monitoring specific MQTT topics
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
+# =============================================================================
+
 blueprint:
   name: MQTT Multi-Topic Listener
   domain: automation

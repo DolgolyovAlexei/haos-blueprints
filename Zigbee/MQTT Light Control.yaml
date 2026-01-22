@@ -44,23 +44,29 @@ blueprint:
             text:
 
         mqtt_topic2:
-          name: MQTT Topic 2
-          description: The MQTT topic of the Zigbee device (e.g., zigbee2mqtt/my_controller_2)
-          default: 'fake'
+          name: MQTT Topic 2 (Optional)
+          description: >
+            Additional MQTT topic for a second controller.
+            Leave as default placeholder if not using.
+          default: "blueprint/disabled/mqtt_light_control_2"
           selector:
             text:
 
         mqtt_topic3:
-          name: MQTT Topic 3
-          description: The MQTT topic of the Zigbee device (e.g., zigbee2mqtt/my_controller_3)
-          default: 'fake'
+          name: MQTT Topic 3 (Optional)
+          description: >
+            Additional MQTT topic for a third controller.
+            Leave as default placeholder if not using.
+          default: "blueprint/disabled/mqtt_light_control_3"
           selector:
             text:
 
         mqtt_topic4:
-          name: MQTT Topic 4
-          description: The MQTT topic of the Zigbee device (e.g., zigbee2mqtt/my_controller_4)
-          default: 'fake'
+          name: MQTT Topic 4 (Optional)
+          description: >
+            Additional MQTT topic for a fourth controller.
+            Leave as default placeholder if not using.
+          default: "blueprint/disabled/mqtt_light_control_4"
           selector:
             text:
 

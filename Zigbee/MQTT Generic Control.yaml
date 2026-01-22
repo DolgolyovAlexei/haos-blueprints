@@ -16,23 +16,29 @@ blueprint:
             text: {}
 
         mqtt_topic2:
-          name: MQTT Topic 2
-          description: The MQTT topic to listen to
-          default: 'fake'
+          name: MQTT Topic 2 (Optional)
+          description: >
+            Additional MQTT topic to listen to.
+            Leave as default placeholder if not using.
+          default: "blueprint/disabled/mqtt_generic_control_2"
           selector:
             text: {}
-            
+
         mqtt_topic3:
-          name: MQTT Topic 3
-          description: The MQTT topic to listen to
-          default: 'fake'
+          name: MQTT Topic 3 (Optional)
+          description: >
+            Additional MQTT topic to listen to.
+            Leave as default placeholder if not using.
+          default: "blueprint/disabled/mqtt_generic_control_3"
           selector:
             text: {}
-            
+
         mqtt_topic4:
-          name: MQTT Topic 4
-          description: The MQTT topic to listen to
-          default: 'fake'
+          name: MQTT Topic 4 (Optional)
+          description: >
+            Additional MQTT topic to listen to.
+            Leave as default placeholder if not using.
+          default: "blueprint/disabled/mqtt_generic_control_4"
           selector:
             text: {}
             

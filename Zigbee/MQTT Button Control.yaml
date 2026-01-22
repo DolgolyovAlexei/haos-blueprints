@@ -15,9 +15,11 @@ blueprint:
             text:
             
         mqtt_topic2:
-          name: MQTT Topic 2
-          description: The MQTT topic for your Zigbee button (e.g., zigbee2mqtt/my_button2).
-          default: fake
+          name: MQTT Topic 2 (Optional)
+          description: >
+            Additional MQTT topic for a second button.
+            Leave as default placeholder if not using.
+          default: "blueprint/disabled/mqtt_button_control"
           selector:
             text:
   

@@ -1,92 +1,137 @@
+# =============================================================================
+# MQTT Light Selector Blueprint
+# =============================================================================
+# Cycles through a list of lights using MQTT button events (up/down/remind).
+# The selected light flashes to provide visual feedback, then returns to its
+# original state. Selection is persisted in an input_text helper.
+# =============================================================================
+
 blueprint:
-  name: "Custom: MQTT Light Selector"
+  name: "MQTT Light Selector"
   description: >
-    Cycle through a list of lights using MQTT button events (up/down).
-    Selected light is stored in an input_text helper and flashes N times
-    with Z interval when selected.
+    Cycle through a list of lights using MQTT button events.
+
+    **Features:**
+    - Navigate lights with up/down actions
+    - Remind action flashes the currently selected light
+    - Visual feedback via configurable flash pattern
+    - Persists selection in an input_text helper
+    - Optional state persistence across restarts (JSON storage)
+    - Optional "remind on idle" - up/down acts as remind if idle too long
+
+    **How it works:**
+    1. Press up/down to cycle through the light list
+    2. Selected light flashes N times to confirm selection
+    3. Light returns to its original on/off state after flashing
   domain: automation
 
   input:
+    # -------------------------------------------------------------------------
+    # MQTT Device Configuration
+    # -------------------------------------------------------------------------
     devices:
-      name: "Devices"
+      name: "MQTT Devices"
       collapsed: false
       input:
         mqtt_topic:
-          name: MQTT Topic
-          description: Topic where button events are published
+          name: Primary MQTT Topic
+          description: Main topic where button events are published (e.g., `zigbee2mqtt/button/action`)
           selector:
             text: {}
+
         mqtt_topic2:
-          name: MQTT Topic
-          description: Topic where button events are published
-          default: 'fake'
+          name: Secondary MQTT Topic (Optional)
+          description: >
+            Additional MQTT topic for a second device.
+            Leave as default placeholder if not using a second device.
+          default: "blueprint/disabled/mqtt_light_selector"
           selector:
             text: {}
-            
+
+    # -------------------------------------------------------------------------
+    # Light Selection
+    # -------------------------------------------------------------------------
     lights:
       name: "Lights"
       collapsed: false
-      input:        
+      input:
         lights:
-          name: Lights
-          description: List of lights to cycle through
+          name: Lights to Cycle
+          description: >
+            List of lights to cycle through.
+            Order determines navigation sequence.
           selector:
             entity:
               domain: light
               multiple: true
-              
+
+    # -------------------------------------------------------------------------
+    # Persistent State Configuration
+    # -------------------------------------------------------------------------
     persistent_state:
-      name: "Persiatent State"
+      name: "Persistent State"
       collapsed: false
       input:
         selected_light_helper:
           name: Selected Light Helper
-          description: Input_text entity to store the selected light
+          description: >
+            Input_text entity to store the currently selected light entity ID.
+            Create one via Settings → Devices & Services → Helpers.
           selector:
             entity:
               domain: input_text
-              
+
         automation_state_entity:
-          name: Automation state entity
-          description: The `input_text` entity will store state of the automation in JSON format. `Doesn't require any initial state, can be empty. For now each automation must have it's personal entity.`
+          name: Automation State Entity (Optional)
+          description: >
+            Input_text entity for storing automation state as JSON.
+            Used to remember light state during flash sequence.
+            Leave empty to disable state persistence.
           default: null
           selector:
             entity:
-              domain:
-                - input_text
-                
+              domain: input_text
+
+    # -------------------------------------------------------------------------
+    # Action ID Mapping
+    # -------------------------------------------------------------------------
     action_ids:
       name: "Action IDs"
       collapsed: false
       input:
         action_up:
-          name: Up Action Identifier
-          description: Payload string for "next light"
-          default: ''
+          name: Next Light Action ID
+          description: MQTT payload action value for selecting the next light in the list.
+          default: ""
           selector:
             text: {}
-    
+
         action_down:
-          name: Down Action Identifier
-          description: Payload string for "previous light"
-          default: ''
+          name: Previous Light Action ID
+          description: MQTT payload action value for selecting the previous light in the list.
+          default: ""
           selector:
             text: {}
-            
+
         action_remind:
-          name: Remind Action Identifier
-          description: Payload string for "current light"
-          default: ''
+          name: Remind Action ID (Optional)
+          description: >
+            MQTT payload action value for flashing the current selection without changing it.
+            Leave empty to disable.
+          default: ""
           selector:
-            text: {} 
-            
+            text: {}
+
+    # -------------------------------------------------------------------------
+    # Behavior Parameters
+    # -------------------------------------------------------------------------
     params:
       name: "Parameters"
       collapsed: false
       input:
         transition:
-          name: Transition Time (ms)
-          description: Duration of brightness transition
+          name: Light Transition Time
+          description: Duration of on/off transitions during flash sequence.
           default: 0
           selector:
             number:
@@ -94,31 +139,34 @@ blueprint:
               max: 500
               step: 10
               unit_of_measurement: ms
-              
+
         remind_using_up_down_delay:
-          name: Force Remind Using Up/Down Delay
-          description: "If specified then `Up`/`Down` action will work like `Remind` in case if duration from the last action was greater then this value"
+          name: Idle Remind Threshold
+          description: >
+            If set, up/down actions will act as "remind" (flash current selection)
+            when more than this many seconds have passed since the last selection.
+            Set to 0 to disable this behavior.
           default: 0
           selector:
             number:
               min: 0
               max: 100
-              step: 1 
+              step: 1
               unit_of_measurement: s
-    
+
         flash_count:
           name: Flash Count
-          description: Number of times to flash selected light
+          description: Number of times to flash the selected light.
           default: 2
           selector:
             number:
               min: 1
               max: 10
               step: 1
-    
+
         flash_interval_ms:
-          name: Flash Interval (ms)
-          description: Interval between flashes in milliseconds
+          name: Flash Interval
+          description: Time between each flash on/off cycle.
           default: 500
           selector:
             number:
@@ -126,43 +174,54 @@ blueprint:
               max: 2000
               step: 100
               unit_of_measurement: ms
-              
+
+    # -------------------------------------------------------------------------
+    # Advanced: Conditions & Callbacks
+    # -------------------------------------------------------------------------
     actions_group:
       name: "Actions"
       collapsed: false
       input:
         condition_action:
           name: Extra Condition
-          description: Optional condition to check before running actions
+          description: Optional condition that must be true for the automation to run.
           default: []
           selector:
             condition: {}
-    
+
         callback_action:
           name: Callback Action
-          description: Optional action to run after main sequence
+          description: Optional action to run after selecting a new light (before flashing).
           default: []
           selector:
             action: {}
         
+# =============================================================================
+# Triggers: Listen for MQTT messages from configured devices
+# =============================================================================
 trigger:
   - platform: mqtt
     topic: !input mqtt_topic
-    id: "mqtt"
+    id: "mqtt_primary"
+
   - platform: mqtt
     topic: !input mqtt_topic2
-    id: "mqtt"
-    
+    id: "mqtt_secondary"
+
+# Apply user-defined condition before processing
 condition: !input condition_action
 
+# Restart mode ensures rapid button presses are handled correctly
 mode: restart
 
+# =============================================================================
+# Variables: Configuration and state management
+# =============================================================================
 variables:
-
-  # Constants.
+  # ----- Debug flag (set to true for troubleshooting) -----
   is_debug: false
-  
-  # Defines.
+
+  # ----- Input references -----
   lights: !input lights
   helper: !input selected_light_helper
   action_up: !input action_up
@@ -172,44 +231,61 @@ variables:
   flash_interval_ms: !input flash_interval_ms
   transition: !input transition
   remind_using_up_down_delay: !input remind_using_up_down_delay
-  mqtt_topic: !input mqtt_topic
-  
-  # JSON global state.
-  state_key_last_was_on: 'lwo'
-  state_key_last_light: 'll'
-  state_key_last_select_action_datetime: 'lsadt' 
+  callback_action: !input callback_action
+
+  # ----- State persistence keys (short names to save space in JSON) -----
+  # lwo = last_was_on, ll = last_light, lsadt = last_select_action_datetime
+  state_key_last_was_on: "lwo"
+  state_key_last_light: "ll"
+  state_key_last_select_action_datetime: "lsadt"
+
+  # ----- Automation state entity and global state parsing -----
   automation_state_entity: !input automation_state_entity
-  automation_state_global: >
-      {% if automation_state_entity is not none %}
-        {% set text = states(automation_state_entity) | string %}
-        {% if text in ['unknown','unavailable','none',''] %}
-          {{ dict() }}
-        {% else %}
-          {{ text | from_json }}
-        {% endif %}
-      {% else %}
+
+  # Parse the JSON state from the helper entity (or return empty dict)
+  automation_state_global: >-
+    {% if automation_state_entity is not none %}
+      {% set text = states(automation_state_entity) | string %}
+      {% if text in ['unknown', 'unavailable', 'none', ''] %}
         {{ dict() }}
+      {% else %}
+        {{ text | from_json }}
       {% endif %}
-      
-  current_datetime: "{{ now() }}"      
-      
-  # TODO alexeid: it's better to use mqtt_topic as key, but cyrilic characters require use of tranliteration
+    {% else %}
+      {{ dict() }}
+    {% endif %}
+
+  current_datetime: "{{ now() }}"
+
+  # Unique key for this automation instance (based on first light in list)
+  # Note: Using entity_id avoids issues with special characters in MQTT topics
   automation_state_key: "mqtt_light_selector:{{ lights[0] }}"
-  automation_state: "{{ automation_state_global.get(automation_state_key, dict()) if automation_state_key != '' else dict() }}"
+
+  # Extract this automation's state from the global state object
+  automation_state: >-
+    {{ automation_state_global.get(automation_state_key, dict()) if automation_state_key != '' else dict() }}
+
+  # Retrieve persisted values (with defaults)
   state_last_was_on: "{{ automation_state.get(state_key_last_was_on, false) | bool }}"
   state_last_light: "{{ automation_state.get(state_key_last_light, '') | string }}"
-  state_last_select_action_datetime: "{{ as_datetime(automation_state.get(state_key_last_select_action_datetime, current_datetime)) }}"
+  state_last_select_action_datetime: >-
+    {{ as_datetime(automation_state.get(state_key_last_select_action_datetime, current_datetime)) }}
 
-  # Current index from helper (fallback to 0 if empty)
-  current_light: >
+  # ----- Current selection from helper -----
+  current_light: >-
     {% set entity_id = states(helper) %}
     {{ entity_id if entity_id in lights else none }}
-  current_index: >
-    {% set idx = lights.index(current_light) if current_light in lights else 0 %}
-    {{ idx }}
 
+  current_index: >-
+    {{ lights.index(current_light) if current_light in lights else 0 }}
+
+# =============================================================================
+# Actions: Main automation logic
+# =============================================================================
 action:
-  # Debug info (log if required)
+  # ---------------------------------------------------------------------------
+  # Debug: Log state information if debug mode is enabled
+  # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
@@ -217,45 +293,56 @@ action:
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Debug Info"
-              message: "automation_state_key = {{ automation_state_key }}"
+              title: "MQTT Light Selector Debug"
+              message: >
+                State key: {{ automation_state_key }}
+                Current light: {{ current_light }}
+                Current index: {{ current_index }}
+                Last light: {{ state_last_light }}
+                Last was on: {{ state_last_was_on }}
 
+  # ---------------------------------------------------------------------------
+  # MQTT Message Handler
+  # ---------------------------------------------------------------------------
   - choose:
-      # MQTT -> handle the message
       - conditions:
+          # Handle messages from either MQTT trigger
           - condition: template
-            value_template: "{{ trigger.id == 'mqtt' }}"
+            value_template: "{{ trigger.id in ['mqtt_primary', 'mqtt_secondary'] }}"
         sequence:
+          # Extract action ID from MQTT payload
           - variables:
               action_id: "{{ trigger.payload_json.action }}"
-          # Don't forget to restore last light state    
+
+          # -----------------------------------------------------------------
+          # Step 1: Restore previous light state if interrupted mid-flash
+          # -----------------------------------------------------------------
+          # If automation was restarted during a flash sequence, restore
+          # the light to its original state before proceeding
           - choose:
               - conditions:
                   - condition: template
                     value_template: "{{ state_last_light != '' }}"
                 sequence:
+                  # Restore light to its previous on/off state
                   - choose:
                       - conditions:
                           - condition: template
                             value_template: "{{ state_last_was_on }}"
-                        sequence:                    
+                        sequence:
                           - service: light.turn_on
                             target:
                               entity_id: "{{ state_last_light }}"
                             data:
                               transition: "{{ transition }}"
-                              
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ not state_last_was_on }}"
-                        sequence:                    
-                          - service: light.turn_off
-                            target:
-                              entity_id: "{{ state_last_light }}"
-                            data:
-                              transition: "{{ transition }}" 
-                              
-                   # Save persistent state.
+                    default:
+                      - service: light.turn_off
+                        target:
+                          entity_id: "{{ state_last_light }}"
+                        data:
+                          transition: "{{ transition }}"
+
+                  # Clear the "last light" from state since we've restored it
                   - choose:
                       - conditions:
                           - condition: template
@@ -265,25 +352,34 @@ action:
                             target:
                               entity_id: "{{ automation_state_entity }}"
                             data:
-                              value: >
-                                {% set new_automation_state = (automation_state | combine({ state_key_last_light: '' })) %}
-                                {% set new_automation_state = (new_automation_state | combine({ state_key_last_was_on: new_on })) %}
-                                {% set new_automation_state = (new_automation_state | combine({ state_key_last_select_action_datetime: current_datetime })) %}
-                                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                
-                                                      
-                              
-          # Do actual selection
+                              value: >-
+                                {% set new_state = automation_state | combine({
+                                  state_key_last_light: '',
+                                  state_key_last_was_on: state_last_was_on,
+                                  state_key_last_select_action_datetime: current_datetime | string
+                                }) %}
+                                {{ automation_state_global | combine({ automation_state_key: new_state }) | tojson }}
+
+          # -----------------------------------------------------------------
+          # Step 2: Process selection action (up/down/remind)
+          # -----------------------------------------------------------------
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ (action_id != '') and (action_id == action_up or action_id == action_down or action_id == action_remind) }}"
+                    value_template: >-
+                      {{ action_id != '' and action_id in [action_up, action_down, action_remind] }}
                 sequence:
+                  # Calculate the new selection
                   - variables:
-                      datetime_diff_seconds: >
-                        {% set diff = current_datetime - state_last_select_action_datetime %}
-                        {{ diff.total_seconds() }}
-                      step: >
-                        {% if remind_using_up_down_delay != 0 and datetime_diff_seconds < remind_using_up_down_delay %}
+                      # Time since last selection (for idle remind feature)
+                      datetime_diff_seconds: >-
+                        {{ (current_datetime - state_last_select_action_datetime).total_seconds() }}
+
+                      # Determine step direction:
+                      # - If idle too long and remind_using_up_down_delay is set, treat as remind (step=0)
+                      # - Otherwise: up=+1, down=-1, remind=0
+                      step: >-
+                        {% if remind_using_up_down_delay > 0 and datetime_diff_seconds > remind_using_up_down_delay %}
                           0
                         {% elif action_up != '' and action_id == action_up %}
                           1
@@ -291,12 +387,16 @@ action:
                           -1
                         {% else %}
                           0
-                        {% endif %}          
-                      new_index: "{{ (current_index + step) % lights|length }}"
-                      new_light: "{{ lights[new_index] }}" 
+                        {% endif %}
+
+                      # Calculate new index with wraparound
+                      new_index: "{{ (current_index + step) % (lights | length) }}"
+                      new_light: "{{ lights[new_index] }}"
+
+                      # Remember if light was on before we start flashing
                       new_on: "{{ is_state(new_light, 'on') }}"
 
-                   # Save persistent state.
+                  # Save state before flashing (to restore if interrupted)
                   - choose:
                       - conditions:
                           - condition: template
@@ -306,24 +406,31 @@ action:
                             target:
                               entity_id: "{{ automation_state_entity }}"
                             data:
-                              value: >
-                                {% set new_automation_state = (automation_state | combine({ state_key_last_light: new_light })) %}
-                                {% set new_automation_state = (new_automation_state | combine({ state_key_last_was_on: new_on })) %}
-                                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                
-                        
-                  # Run callback only if user provided it: think if we need to invoke callback here
+                              value: >-
+                                {% set new_state = automation_state | combine({
+                                  state_key_last_light: new_light,
+                                  state_key_last_was_on: new_on,
+                                  state_key_last_select_action_datetime: current_datetime | string
+                                }) %}
+                                {{ automation_state_global | combine({ automation_state_key: new_state }) | tojson }}
+
+                  # Run user-defined callback action (if provided)
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ callback_action is defined and (callback_action|length > 0) }}"
-                        sequence: !input callback_action                                        
-                        
-                   # Assign new light entity id to helper value                   
+                            value_template: "{{ callback_action is defined and (callback_action | length > 0) }}"
+                        sequence: !input callback_action
+
+                  # Update the helper with the new selection
                   - service: input_text.set_value
                     target:
                       entity_id: "{{ helper }}"
                     data:
                       value: "{{ new_light }}"
+
+                  # -----------------------------------------------------------------
+                  # Flash sequence: Visual feedback for selection
+                  # -----------------------------------------------------------------
                   - repeat:
                       count: "{{ flash_count }}"
                       sequence:
@@ -332,18 +439,20 @@ action:
                             entity_id: "{{ new_light }}"
                           data:
                             transition: "{{ transition }}"
+
                         - delay:
                             milliseconds: "{{ flash_interval_ms }}"
-                            
+
                         - service: light.turn_on
                           target:
                             entity_id: "{{ new_light }}"
                           data:
-                            transition: "{{ transition }}"                    
+                            transition: "{{ transition }}"
+
                         - delay:
                             milliseconds: "{{ flash_interval_ms }}"
-                            
-                  # Optionally turn off the light.    
+
+                  # Restore light to original state if it was off
                   - choose:
                       - conditions:
                           - condition: template
@@ -351,11 +460,11 @@ action:
                         sequence:
                           - service: light.turn_off
                             target:
-                              entity_id: "{{ new_light }}" 
+                              entity_id: "{{ new_light }}"
                             data:
-                              transition: "{{ transition }}"  
-                              
-                   # Save persistent state.
+                              transition: "{{ transition }}"
+
+                  # Clear state after successful completion
                   - choose:
                       - conditions:
                           - condition: template
@@ -365,8 +474,10 @@ action:
                             target:
                               entity_id: "{{ automation_state_entity }}"
                             data:
-                              value: >
-                                {% set new_automation_state = (automation_state | combine({ state_key_last_light: '' })) %}
-                                {% set new_automation_state = (new_automation_state | combine({ state_key_last_was_on: new_on })) %}
-                                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}                
-                                                      
+                              value: >-
+                                {% set new_state = automation_state | combine({
+                                  state_key_last_light: '',
+                                  state_key_last_was_on: new_on,
+                                  state_key_last_select_action_datetime: current_datetime | string
+                                }) %}
+                                {{ automation_state_global | combine({ automation_state_key: new_state }) | tojson }}

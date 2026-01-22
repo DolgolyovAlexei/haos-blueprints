@@ -1,69 +1,221 @@
+# =============================================================================
+# MQTT Knob Media Controller Blueprint
+# =============================================================================
+# Controls a media player using an MQTT-connected rotary encoder/knob.
+# Supports customizable action IDs to work with various MQTT devices.
+# =============================================================================
+
 blueprint:
-  name: "Custom: MQTT Knob Media Controller (Dynamic Step)"
+  name: "MQTT Knob Media Controller"
   description: >
-    Control a media player using a knob switch via MQTT.
-    - `toggle` pauses/unpauses
-    - `rotate_left` decreases volume
-    - `rotate_right` increases volume
-    - Volume step is taken from `action_step` in the MQTT payload
+    Control a media player using a rotary knob/encoder via MQTT.
+
+    **Supported actions:**
+    - Play/Pause toggle (button press)
+    - Volume up/down (rotation)
+    - Mute toggle (optional)
+    - Next/Previous track (optional)
+
+    **Volume step behavior:**
+    - If your device sends `action_step_size` in the MQTT payload, it will be used
+    - Otherwise, the configured default step size is applied
+
+    **Note:** Action IDs can be customized to match your specific MQTT device.
   domain: automation
+
   input:
+    # -------------------------------------------------------------------------
+    # Required: Core Settings
+    # -------------------------------------------------------------------------
     mqtt_topic:
       name: MQTT Topic
-      description: The topic your knob publishes to (e.g., zigbee2mqtt/knob1/action)
+      description: >
+        The MQTT topic your knob publishes to.
+        Example: `zigbee2mqtt/living_room_knob/action`
       selector:
         text:
+
     media_player:
       name: Media Player
+      description: The media player entity to control.
       selector:
         entity:
           domain: media_player
 
+    # -------------------------------------------------------------------------
+    # Volume Settings
+    # -------------------------------------------------------------------------
+    default_volume_step:
+      name: Default Volume Step
+      description: >
+        Volume change per step (0.01 = 1%, 0.05 = 5%).
+        Used when the device doesn't provide step size in the payload.
+      default: 0.05
+      selector:
+        number:
+          min: 0.01
+          max: 0.25
+          step: 0.01
+          mode: slider
+
+    step_size_divisor:
+      name: Step Size Divisor
+      description: >
+        Divisor applied to `action_step_size` from device payload.
+        Higher value = smaller volume changes. Default 500 works well for most Zigbee knobs.
+      default: 500
+      selector:
+        number:
+          min: 100
+          max: 1000
+          step: 50
+          mode: slider
+
+    # -------------------------------------------------------------------------
+    # Action IDs - Customize to match your MQTT device
+    # -------------------------------------------------------------------------
+    action_play_pause:
+      name: Play/Pause Action ID
+      description: Action ID sent when pressing the knob button.
+      default: "toggle"
+      selector:
+        text:
+
+    action_volume_down:
+      name: Volume Down Action ID
+      description: Action ID sent when rotating the knob counter-clockwise.
+      default: "brightness_step_down"
+      selector:
+        text:
+
+    action_volume_up:
+      name: Volume Up Action ID
+      description: Action ID sent when rotating the knob clockwise.
+      default: "brightness_step_up"
+      selector:
+        text:
+
+    action_mute:
+      name: Mute Action ID (Optional)
+      description: >
+        Action ID for mute toggle. Leave empty to disable.
+        Some devices send this on double-press or long-press.
+      default: ""
+      selector:
+        text:
+
+    action_next_track:
+      name: Next Track Action ID (Optional)
+      description: Action ID for skipping to next track. Leave empty to disable.
+      default: ""
+      selector:
+        text:
+
+    action_prev_track:
+      name: Previous Track Action ID (Optional)
+      description: Action ID for going to previous track. Leave empty to disable.
+      default: ""
+      selector:
+        text:
+
+# =============================================================================
+# Trigger: Listen for MQTT messages on configured topic
+# =============================================================================
 trigger:
   - platform: mqtt
     topic: !input mqtt_topic
 
+# =============================================================================
+# Variables: Extract and process MQTT payload data
+# =============================================================================
 variables:
+  # Input references
   media: !input media_player
-  action: "{{ trigger.payload_json.action }}"
-  step: >-
-      {% set key = 'action_step_size' %}
-      {% if key in trigger.payload_json %}
-        {{ (trigger.payload_json[key] | float(0)) / 500 }}
-      {% else %}
-        0
-      {% endif %}
+  default_step: !input default_volume_step
+  divisor: !input step_size_divisor
 
+  # Action ID mappings
+  act_play_pause: !input action_play_pause
+  act_volume_down: !input action_volume_down
+  act_volume_up: !input action_volume_up
+  act_mute: !input action_mute
+  act_next: !input action_next_track
+  act_prev: !input action_prev_track
+
+  # Extract action from MQTT payload
+  action: "{{ trigger.payload_json.action }}"
+
+  # Calculate volume step: use device-provided value or fall back to default
+  step: >-
+    {% if 'action_step_size' in trigger.payload_json %}
+      {{ (trigger.payload_json.action_step_size | float(0)) / divisor }}
+    {% else %}
+      {{ default_step }}
+    {% endif %}
+
+# =============================================================================
+# Actions: Handle each action type
+# =============================================================================
 action:
   - choose:
+      # ----- Play/Pause Toggle -----
       - conditions:
           - condition: template
-            value_template: "{{ action == 'toggle' }}"
+            value_template: "{{ action == act_play_pause }}"
         sequence:
           - service: media_player.media_play_pause
             target:
               entity_id: "{{ media }}"
+
+      # ----- Volume Down -----
       - conditions:
           - condition: template
-            value_template: "{{ action == 'brightness_step_down' }}"
+            value_template: "{{ action == act_volume_down }}"
         sequence:
-          - variables:
-              current: "{{ state_attr(media, 'volume_level') | float(0) }}"
-              new: "{{ [0, current - step] | max }}"
           - service: media_player.volume_set
             target:
               entity_id: "{{ media }}"
             data:
-              volume_level: "{{ new }}"
+              volume_level: >-
+                {{ [0, (state_attr(media, 'volume_level') | float(0)) - step] | max }}
+
+      # ----- Volume Up -----
       - conditions:
           - condition: template
-            value_template: "{{ action == 'brightness_step_up' }}"
+            value_template: "{{ action == act_volume_up }}"
         sequence:
-          - variables:
-              current: "{{ state_attr(media, 'volume_level') | float(0) }}"
-              new: "{{ [current + step, 1] | min }}"
           - service: media_player.volume_set
             target:
               entity_id: "{{ media }}"
             data:
-              volume_level: "{{ new }}"
+              volume_level: >-
+                {{ [1, (state_attr(media, 'volume_level') | float(0)) + step] | min }}
+
+      # ----- Mute Toggle (Optional) -----
+      - conditions:
+          - condition: template
+            value_template: "{{ act_mute != '' and action == act_mute }}"
+        sequence:
+          - service: media_player.volume_mute
+            target:
+              entity_id: "{{ media }}"
+            data:
+              is_volume_muted: "{{ not state_attr(media, 'is_volume_muted') }}"
+
+      # ----- Next Track (Optional) -----
+      - conditions:
+          - condition: template
+            value_template: "{{ act_next != '' and action == act_next }}"
+        sequence:
+          - service: media_player.media_next_track
+            target:
+              entity_id: "{{ media }}"
+
+      # ----- Previous Track (Optional) -----
+      - conditions:
+          - condition: template
+            value_template: "{{ act_prev != '' and action == act_prev }}"
+        sequence:
+          - service: media_player.media_previous_track
+            target:
+              entity_id: "{{ media }}"

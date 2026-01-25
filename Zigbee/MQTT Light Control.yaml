@@ -2638,18 +2638,7 @@ action:
                 {% else %}
                   {{ [0, [(value_sequence | length - 1), next_index_preview]|min]|max }}
                 {% endif %}
-
-              # Parse preset JSON format
-              preset_str: "{{ value_sequence[next_index] | trim }}"
-              parsed_json: "{{ preset_str | from_json(default=none) }}"
-
-          # Validate JSON parsing succeeded
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: '{{ parsed_json is none }}'
-                sequence:
-                  - stop: "Invalid JSON in preset. Ensure you use double quotes, not single quotes. Got: {{ preset_str }}"
+              parsed_json: "{{ value_sequence[next_index] | from_json }}"
 
           - variables:
               light_data: >

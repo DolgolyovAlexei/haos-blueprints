@@ -10,7 +10,10 @@
 #   - Brightness control (increment, hold, list-based, min/max)
 #   - Color temperature control (increment, hold, list-based)
 #   - RGB/Hue control (increment, hold, list-based)
-#   - Preset list support for quick scene switching
+#   - Preset list support (JSON format) for quick scene switching
+#   - Scene activation support (up to 4 scenes)
+#   - Light group and area targeting
+#   - Configurable transition duration for smooth changes
 #   - Alternative light support (control secondary lights when primary are off)
 #   - Persistent state storage via input_text entity
 #   - Custom action callbacks for extending functionality
@@ -132,6 +135,25 @@ blueprint:
               domain:
                 - input_text
               multiple: true
+
+        target_light_group:
+          name: Target Light Group (optional)
+          description: >
+            A light group entity to control. The group will be controlled as
+            a single entity. Can be used alongside individual lights.
+          default: null
+          selector:
+            entity:
+              domain: light
+
+        target_area:
+          name: Target Area (optional)
+          description: >
+            An area to control. All lights in the area will be discovered
+            and controlled. Provide the area ID (e.g., "living_room").
+          default: ""
+          selector:
+            text:
 
     # -------------------------------------------------------------------------
     # Alternative Lights Configuration
@@ -442,6 +464,20 @@ blueprint:
           default: false
           selector:
             boolean:
+
+        transition_duration:
+          name: Transition Duration
+          description: >
+            Duration in seconds for light transitions (brightness, color changes).
+            Set to 0 for instant changes. Note: Hold actions ignore this setting
+            for immediate response.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 10
+              step: 0.5
+              unit_of_measurement: "s"
 
     # -------------------------------------------------------------------------
     # Brightness Increment Actions
@@ -904,10 +940,12 @@ blueprint:
         preset_list_entity:
           name: Preset List Entity
           description: >
-            An input_select entity containing preset values. Each entry must have
-            the following layout: `key:value;key:value`, example
-            `color_temp_kelvin:4000;brightness:255`. Supported keys are:
-            `color_temp_kelvin`, `rgb_color`, `brightness`
+            An input_select entity containing preset values in JSON format.
+            Example: `{"color_temp_kelvin": 4000, "brightness": 255}`
+            Example with RGB: `{"rgb_color": [255, 0, 0], "brightness": 200}`
+            Example with effect: `{"effect": "colorloop", "brightness": 128}`
+            Supported keys: brightness, color_temp_kelvin, rgb_color, hs_color,
+            xy_color, effect, transition
           default: null
           selector:
             entity:
@@ -916,6 +954,102 @@ blueprint:
         action_preset_list_callback:
           name: Callback
           description: "Callback action"
+          default: []
+          selector:
+            action: {}
+
+    # -------------------------------------------------------------------------
+    # Scene Activation Actions
+    # -------------------------------------------------------------------------
+    # Directly activate Home Assistant scenes via MQTT actions
+    Action_Group_Scene:
+      name: "Actions: Scene Activation"
+      collapsed: true
+      input:
+        action_scene_1:
+          name: Scene 1 Action ID
+          description: Action ID to activate Scene 1
+          default: ''
+          selector:
+            text:
+
+        scene_entity_1:
+          name: Scene 1 Entity
+          description: The scene entity to activate when Scene 1 Action ID is received
+          default: null
+          selector:
+            entity:
+              domain: scene
+
+        action_scene_1_callback:
+          name: Scene 1 Callback
+          description: Callback action triggered after Scene 1 activation
+          default: []
+          selector:
+            action: {}
+
+        action_scene_2:
+          name: Scene 2 Action ID
+          description: Action ID to activate Scene 2
+          default: ''
+          selector:
+            text:
+
+        scene_entity_2:
+          name: Scene 2 Entity
+          description: The scene entity to activate when Scene 2 Action ID is received
+          default: null
+          selector:
+            entity:
+              domain: scene
+
+        action_scene_2_callback:
+          name: Scene 2 Callback
+          description: Callback action triggered after Scene 2 activation
+          default: []
+          selector:
+            action: {}
+
+        action_scene_3:
+          name: Scene 3 Action ID
+          description: Action ID to activate Scene 3
+          default: ''
+          selector:
+            text:
+
+        scene_entity_3:
+          name: Scene 3 Entity
+          description: The scene entity to activate when Scene 3 Action ID is received
+          default: null
+          selector:
+            entity:
+              domain: scene
+
+        action_scene_3_callback:
+          name: Scene 3 Callback
+          description: Callback action triggered after Scene 3 activation
+          default: []
+          selector:
+            action: {}
+
+        action_scene_4:
+          name: Scene 4 Action ID
+          description: Action ID to activate Scene 4
+          default: ''
+          selector:
+            text:
+
+        scene_entity_4:
+          name: Scene 4 Entity
+          description: The scene entity to activate when Scene 4 Action ID is received
+          default: null
+          selector:
+            entity:
+              domain: scene
+
+        action_scene_4_callback:
+          name: Scene 4 Callback
+          description: Callback action triggered after Scene 4 activation
           default: []
           selector:
             action: {}
@@ -1117,17 +1251,38 @@ variables:
   apply_common_options_to_newly_enabled_light: !input apply_common_options_to_newly_enabled_light
   target_lights_helper: !input target_lights_helper
   target_lights: !input target_lights
+  target_light_group: !input target_light_group
+  target_area: !input target_area
   best_source_light_for_options: !input best_source_light_for_options
 
-  # Resolve all lights from either helper entities or direct selection
+  # Resolve all lights from direct selection, helpers, groups, and areas
   resolved_all_lights: >-
     {% set result = [] %}
-    {% if target_lights_helper != '' %}
-      {% set result = target_lights_helper | map('states') | list %}
-    {% elif target_lights | length > 0 %}
+    {# Direct light selection #}
+    {% if target_lights | length > 0 %}
       {% set result = result + target_lights %}
     {% endif %}
-    {{ result }}
+    {# Helper-based selection #}
+    {% if target_lights_helper != '' %}
+      {% set result = result + (target_lights_helper | map('states') | list) %}
+    {% endif %}
+    {# Light group - add the group entity itself #}
+    {% if target_light_group is not none %}
+      {% set result = result + [target_light_group] %}
+    {% endif %}
+    {# Area-based selection #}
+    {% if target_area != '' %}
+      {% set area_lights = area_entities(target_area) | select('match', '^light\\.') | list %}
+      {% set result = result + area_lights %}
+    {% endif %}
+    {# Remove duplicates while preserving order #}
+    {% set seen = namespace(items=[]) %}
+    {% for item in result %}
+      {% if item not in seen.items %}
+        {% set seen.items = seen.items + [item] %}
+      {% endif %}
+    {% endfor %}
+    {{ seen.items }}
 
   # Determine which lights are currently enabled (ON state)
   enabled_lights_default: "{{ resolved_all_lights | select('is_state','on') | list }}"
@@ -1259,6 +1414,7 @@ variables:
   action_brightness_set_min_or_max: !input action_brightness_set_min_or_max
   result_max_brightness: !input max_brightness
   result_min_brightness: !input min_brightness
+  transition_duration: !input transition_duration
 
   # ---------------------------------------------------------------------------
   # Color Temperature Action IDs and Limits
@@ -1310,6 +1466,18 @@ variables:
   # ---------------------------------------------------------------------------
   action_preset_list_up: !input action_preset_list_up
   action_preset_list_down: !input action_preset_list_down
+
+  # ---------------------------------------------------------------------------
+  # Scene Action IDs and Entities
+  # ---------------------------------------------------------------------------
+  action_scene_1: !input action_scene_1
+  action_scene_2: !input action_scene_2
+  action_scene_3: !input action_scene_3
+  action_scene_4: !input action_scene_4
+  scene_entity_1: !input scene_entity_1
+  scene_entity_2: !input scene_entity_2
+  scene_entity_3: !input scene_entity_3
+  scene_entity_4: !input scene_entity_4
 
   # ---------------------------------------------------------------------------
   # Callbacks
@@ -1564,9 +1732,12 @@ action:
                               result_options_reference_light: "{{ alternative_target if alternative_target is not none else options_reference_light }}"
                               color_mode: "{{ state_attr(result_options_reference_light, 'color_mode') if (result_options_reference_light is not none) else none }}"
 
-                              # Build light data (brightness, color) to apply
+                              # Build light data (brightness, color, transition) to apply
                               light_data: >
                                 {% set d = dict() %}
+                                {% if transition_duration > 0 %}
+                                  {% set d = d | combine({ 'transition': transition_duration }) %}
+                                {% endif %}
                                 {% if not color_mode or (result_options_reference_light is none) or (not apply_common_options_to_newly_enabled_light) %}
                                   {% if set_max_brightness_on_turn_on %}
                                     {% set d = d | combine({ 'brightness': result_max_brightness }) %}
@@ -1746,6 +1917,8 @@ action:
                           - service: light.turn_off
                             target:
                               entity_id: "{{ lights_to_turn_off }}"
+                            data:
+                              transition: "{{ transition_duration }}"
 
                           # Turn off the switches
                           - service: switch.turn_off
@@ -1824,6 +1997,7 @@ action:
               entity_id: "{{ lights_to_control }}"
             data:
               brightness: "{{ result_brightness }}"
+              transition: "{{ transition_duration }}"
 
           - choose:
               - conditions:
@@ -1865,6 +2039,7 @@ action:
               entity_id: "{{ lights_to_control }}"
             data:
               brightness: "{{ result_brightness }}"
+              transition: "{{ transition_duration }}"
 
           - choose:
               - conditions:
@@ -2220,6 +2395,9 @@ action:
 
               light_data: >
                 {% set d = dict() %}
+                {% if transition_duration > 0 %}
+                  {% set d = d | combine({ 'transition': transition_duration }) %}
+                {% endif %}
                 {% set d = d | combine({ result_attribute: value_to_set }) %}
                 {% if has_switched_mode and state_key_prefix != '' %}
                   {% set d = d | combine({ 'brightness': brightness_to_set }) %}
@@ -2363,6 +2541,9 @@ action:
 
               light_data: >
                 {% set d = dict() %}
+                {% if transition_duration > 0 %}
+                  {% set d = d | combine({ 'transition': transition_duration }) %}
+                {% endif %}
                 {% set d = d | combine({ result_attribute: value_to_set }) %}
                 {{ d }}
 
@@ -2458,29 +2639,29 @@ action:
                   {{ [0, [(value_sequence | length - 1), next_index_preview]|min]|max }}
                 {% endif %}
 
-              # Parse preset string (format: "key:value;key:value")
-              preset: "{{ value_sequence[next_index] | lower }}"
+              # Parse preset JSON format
+              preset_str: "{{ value_sequence[next_index] | trim }}"
               light_data: >
-                {% set parts = preset.split(";") %}
                 {% set ns = namespace(res=dict(), brightness_found=False) %}
-                {% for i in range(parts|length) %}
-                  {% set temp = parts[i].split(':') %}
-                  {% set key = temp[0] | trim %}
-                  {% set value = temp[1] | trim %}
+                {% set parsed = preset_str | from_json %}
+                {% for key, value in parsed.items() %}
                   {% if key == 'brightness' %}
                     {% set ns.res = ns.res | combine({ 'brightness': value | int }) %}
                     {% set ns.brightness_found = True %}
-                  {% elif key == 'color_temp_kelvin' %}
-                    {% set ns.res = ns.res | combine({ 'color_temp_kelvin': value | int }) %}
-                  {% elif key == 'rgb_color' %}
-                    {% set ns.res = ns.res | combine({ 'rgb_color': value | from_json }) %}
-                  {% elif key == 'color_mode' %}
-                    {% set ns.res = ns.res | combine({ 'color_mode': value }) %}
+                  {% elif key in ['color_temp_kelvin', 'effect', 'transition'] %}
+                    {% set ns.res = ns.res | combine({ key: value }) %}
+                  {% elif key in ['rgb_color', 'hs_color', 'xy_color'] %}
+                    {% set ns.res = ns.res | combine({ key: value }) %}
                   {% endif %}
                 {% endfor %}
+                {# Preserve current brightness if not specified in preset #}
                 {% if not ns.brightness_found %}
                   {% set existing_brightness = state_attr(options_reference_light, 'brightness') | int %}
                   {% set ns.res = ns.res | combine({ 'brightness': existing_brightness }) %}
+                {% endif %}
+                {# Add transition if not specified in preset #}
+                {% if 'transition' not in ns.res and transition_duration > 0 %}
+                  {% set ns.res = ns.res | combine({ 'transition': transition_duration }) %}
                 {% endif %}
                 {{ ns.res }}
 
@@ -2518,6 +2699,70 @@ action:
                   - condition: template
                     value_template: "{{ action_preset_list_callback != [] }}"
                 sequence: !input action_preset_list_callback
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_action_callback != [] }}"
+                sequence: !input any_action_callback
+
+      # -----------------------------------------------------------------------
+      # SCENE ACTIVATION ACTIONS
+      # -----------------------------------------------------------------------
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ action_id != '' and action_id in [action_scene_1, action_scene_2, action_scene_3, action_scene_4] }}
+        sequence:
+          - variables:
+              action_scene_1_callback: !input action_scene_1_callback
+              action_scene_2_callback: !input action_scene_2_callback
+              action_scene_3_callback: !input action_scene_3_callback
+              action_scene_4_callback: !input action_scene_4_callback
+
+              scene_to_activate: >
+                {% if action_id == action_scene_1 %}
+                  {{ scene_entity_1 }}
+                {% elif action_id == action_scene_2 %}
+                  {{ scene_entity_2 }}
+                {% elif action_id == action_scene_3 %}
+                  {{ scene_entity_3 }}
+                {% elif action_id == action_scene_4 %}
+                  {{ scene_entity_4 }}
+                {% else %}
+                  {{ none }}
+                {% endif %}
+
+          # Activate the scene
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ scene_to_activate is not none }}"
+                sequence:
+                  - service: scene.turn_on
+                    target:
+                      entity_id: "{{ scene_to_activate }}"
+                    data:
+                      transition: "{{ transition_duration }}"
+
+          # Execute scene callbacks
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_id == action_scene_1 and action_scene_1_callback != [] }}"
+                sequence: !input action_scene_1_callback
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_id == action_scene_2 and action_scene_2_callback != [] }}"
+                sequence: !input action_scene_2_callback
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_id == action_scene_3 and action_scene_3_callback != [] }}"
+                sequence: !input action_scene_3_callback
+              - conditions:
+                  - condition: template
+                    value_template: "{{ action_id == action_scene_4 and action_scene_4_callback != [] }}"
+                sequence: !input action_scene_4_callback
 
           - choose:
               - conditions:

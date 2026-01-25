@@ -374,11 +374,12 @@ blueprint:
           description: >
             Sensor that reports current power consumption in watts.
             Used to track energy usage per cycle.
-          default: null
+          default: []
           selector:
             entity:
               domain: sensor
               device_class: power
+              multiple: true
 
         energy_cost_per_kwh:
           name: Energy Cost per kWh
@@ -438,6 +439,7 @@ trigger:
     entity_id: !input tub_clean_counter_sensor
 
   # Power sensor updates (for energy tracking)
+  # Note: Uses multiple selector, so empty list means trigger is skipped
   - platform: state
     entity_id: !input power_sensor
     id: "power_update"
@@ -549,10 +551,10 @@ variables:
   is_paused: >
     {{ run_state in pause_state_ids }}
 
-  # Get current power consumption
+  # Get current power consumption (power_sensor is a list, use first item if available)
   current_power: >
-    {% if power_sensor is not none %}
-      {{ states(power_sensor) | float(0) }}
+    {% if power_sensor | length > 0 %}
+      {{ states(power_sensor[0]) | float(0) }}
     {% else %}
       {{ 0 }}
     {% endif %}
@@ -709,9 +711,9 @@ action:
                 {% else %}
                   {{ 0 }}
                 {% endif %}
-              # Build energy report string
+              # Build energy report string (power_sensor is a list)
               energy_report: >
-                {% if power_sensor is not none and energy_kwh > 0 %}
+                {% if power_sensor | length > 0 and energy_kwh > 0 %}
                   {% set tpl = message_energy_report_template %}
                   {{ tpl | replace('{{ energy_kwh }}', energy_kwh | string)
                          | replace('{{ energy_cost }}', energy_cost | string) }}
@@ -993,7 +995,7 @@ action:
           - condition: template
             value_template: >
               {{ trigger.id == 'power_update'
-              and power_sensor is not none
+              and power_sensor | length > 0
               and automation_state.get(state_notification_about_start_sent, false)
               and is_running }}
         sequence:

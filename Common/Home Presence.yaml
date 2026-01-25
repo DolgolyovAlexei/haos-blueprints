@@ -156,12 +156,11 @@ blueprint:
       collapsed: true
       input:
         guest_mode_switch:
-          name: Guest Mode Switch (optional)
+          name: Guest Mode Switch
           description: >
             Input boolean that forces presence ON when enabled.
             Useful when guests are home without tracked devices.
             Leave empty to disable guest mode feature.
-          default: []
           selector:
             entity:
               domain: input_boolean

@@ -5,40 +5,53 @@
 # notifications for various events throughout the wash/dry cycle.
 #
 # Features:
-#   - Start notification with cycle duration and mode details
-#   - Completion notification (reminder to unload clothes)
+#   - Start notification with cycle duration, estimated end time, and mode details
+#   - Completion notification (reminder to unload clothes) with energy report
 #   - "Almost done" notification (configurable minutes before end)
+#   - Pause/Resume notifications (detect when cycle is paused or resumed)
 #   - Error message notifications
 #   - Preparation mode notification (e.g., for dryer prep)
 #   - Tub/drum cleaning reminder based on wash counter
+#   - Power consumption monitoring with energy tracking per cycle
 #   - Fully customizable notification messages (i18n support)
+#   - Debug notifications for troubleshooting
 #
 # State Machine:
 #   The automation tracks the appliance through these states:
 #   1. IDLE: Waiting for cycle to start
 #   2. RUNNING: Cycle in progress (start notification sent)
-#   3. FINISHING: Near completion (time-to-end notification sent)
-#   4. COMPLETED: Cycle done (completion notification sent, state reset)
+#   3. PAUSED: Cycle temporarily paused (pause notification sent)
+#   4. FINISHING: Near completion (time-to-end notification sent)
+#   5. COMPLETED: Cycle done (completion notification sent, state reset)
 #
 # Persistent State Keys:
-#   - nass: Notification About Start Sent
-#   - nart: Notification About Remaining Time Sent
-#   - naps: Notification About Preparation Sent
+#   - nass:  Notification About Start Sent
+#   - nart:  Notification About Remaining Time Sent
+#   - naps:  Notification About Preparation Sent
+#   - napas: Notification About Pause Sent
+#   - wasp:  Was Paused flag
+#   - cst:   Cycle Start Time (ISO timestamp)
+#   - esmp:  Energy Samples accumulator (Wh)
+#   - lst:   Last Sample Time (ISO timestamp)
 #
 # Message Template Variables:
 #   All message templates support Jinja2 templating with these variables:
-#   - {{ device_name }}  - Device name (e.g., "Washing Machine")
-#   - {{ remaining }}    - Remaining time as string (e.g., "01:30:00")
-#   - {{ minutes }}      - Remaining minutes as number (e.g., 90)
-#   - {{ error }}        - Error message text (only in error notification)
-#   - {{ tub_count }}    - Tub clean counter value (only in tub clean notification)
-#   - {{ tub_threshold }}- Tub clean threshold (only in tub clean notification)
-#   - {{ details }}      - Startup details from sensors (only in start notification)
+#   - {{ device_name }}   - Device name (e.g., "Washing Machine")
+#   - {{ remaining }}     - Remaining time as string (e.g., "01:30:00")
+#   - {{ estimated_end }} - Estimated completion time (e.g., "14:30")
+#   - {{ minutes }}       - Remaining minutes as number (e.g., 90)
+#   - {{ error }}         - Error message text (only in error notification)
+#   - {{ tub_count }}     - Tub clean counter value (only in tub clean notification)
+#   - {{ tub_threshold }} - Tub clean threshold (only in tub clean notification)
+#   - {{ details }}       - Startup details from sensors (only in start notification)
+#   - {{ energy_kwh }}    - Energy consumed in kWh (only in completion notification)
+#   - {{ energy_cost }}   - Estimated cost (only in completion notification)
 #
 # Requirements:
 #   - Sensors for: remaining time, run state, error messages
 #   - input_text entity for persistent state storage
 #   - Notification service entity
+#   - (Optional) Power sensor for energy tracking
 #
 # Note: Default messages are in Russian for LG ThinQ integration.
 #       Customize messages in the "Messages" section for your language.
@@ -99,6 +112,13 @@ blueprint:
               max: 60
               unit_of_measurement: minutes
               mode: slider
+
+        show_estimated_end_time:
+          name: Show Estimated End Time
+          description: Include estimated completion time in start notification
+          default: true
+          selector:
+            boolean:
 
     # -------------------------------------------------------------------------
     # Persistent State Configuration
@@ -162,8 +182,8 @@ blueprint:
           name: "Start Message"
           description: >
             Message sent when cycle starts.
-            Variables: {{ device_name }}, {{ remaining }}, {{ details }}
-          default: "🧺 {{ device_name }}: старт. Длительность: `{{ remaining }}`.{{ details }}"
+            Variables: {{ device_name }}, {{ remaining }}, {{ details }}, {{ estimated_end }}
+          default: "🧺 {{ device_name }}: старт. Длительность: `{{ remaining }}`. Завершение: ~{{ estimated_end }}.{{ details }}"
           selector:
             text:
               multiline: true
@@ -218,6 +238,36 @@ blueprint:
             text:
               multiline: true
 
+        message_paused:
+          name: "Paused Message"
+          description: >
+            Message sent when cycle is paused.
+            Variables: {{ device_name }}, {{ remaining }}
+          default: "⏸️ {{ device_name }}: пауза. Осталось: {{ remaining }}."
+          selector:
+            text:
+              multiline: true
+
+        message_resumed:
+          name: "Resumed Message"
+          description: >
+            Message sent when cycle resumes.
+            Variables: {{ device_name }}, {{ remaining }}
+          default: "▶️ {{ device_name }}: продолжение. Осталось: {{ remaining }}."
+          selector:
+            text:
+              multiline: true
+
+        message_energy_report:
+          name: "Energy Report Message"
+          description: >
+            Appended to completion message with energy stats.
+            Variables: {{ energy_kwh }}, {{ energy_cost }}
+          default: " Потребление: {{ energy_kwh }} kWh."
+          selector:
+            text:
+              multiline: true
+
     # -------------------------------------------------------------------------
     # Device Information Sensors
     # -------------------------------------------------------------------------
@@ -230,6 +280,16 @@ blueprint:
           description: >
             List of run state ID(s) that indicate the device is not actively
             running a cycle (e.g., 'Pause', 'Standby', 'Ready')
+          default: []
+          selector:
+            text:
+              multiple: true
+
+        pause_state_ids:
+          name: Pause State ID(s)
+          description: >
+            List of run state ID(s) that indicate the device is paused
+            (e.g., 'Пауза', 'Pause'). Used for pause/resume notifications.
           default: []
           selector:
             text:
@@ -302,6 +362,53 @@ blueprint:
             text:
               multiple: true
 
+    # -------------------------------------------------------------------------
+    # Power Monitoring
+    # -------------------------------------------------------------------------
+    power_monitoring:
+      name: "Power Monitoring"
+      collapsed: true
+      input:
+        power_sensor:
+          name: Power Sensor (optional)
+          description: >
+            Sensor that reports current power consumption in watts.
+            Used to track energy usage per cycle.
+          default: null
+          selector:
+            entity:
+              domain: sensor
+              device_class: power
+
+        energy_cost_per_kwh:
+          name: Energy Cost per kWh
+          description: >
+            Cost per kilowatt-hour for energy calculations.
+            Set to 0 to disable cost display.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 0.01
+              unit_of_measurement: "currency/kWh"
+
+    # -------------------------------------------------------------------------
+    # Debug
+    # -------------------------------------------------------------------------
+    debug:
+      name: "Debug"
+      collapsed: true
+      input:
+        enable_debug_notifications:
+          name: Enable Debug Notifications
+          description: >
+            Send persistent notifications for debugging automation behavior.
+            Shows state changes, trigger details, and variable values.
+          default: false
+          selector:
+            boolean:
+
 # =============================================================================
 # AUTOMATION MODE
 # =============================================================================
@@ -330,6 +437,11 @@ trigger:
   - platform: state
     entity_id: !input tub_clean_counter_sensor
 
+  # Power sensor updates (for energy tracking)
+  - platform: state
+    entity_id: !input power_sensor
+    id: "power_update"
+
 # =============================================================================
 # CONDITIONS
 # =============================================================================
@@ -348,12 +460,18 @@ variables:
   state_notification_about_remaining_time_sent: 'nart'  # "Almost done" notification sent
   state_notification_about_start_sent: 'nass'           # Start notification sent
   state_notification_about_preparation_sent: 'naps'     # Preparation notification sent
+  state_notification_about_pause_sent: 'napas'          # Pause notification sent
+  state_was_paused: 'wasp'                              # Track if cycle was paused
+  state_cycle_start_time: 'cst'                         # Cycle start timestamp
+  state_energy_samples: 'esmp'                          # Energy sample accumulator (Wh)
+  state_last_sample_time: 'lst'                         # Last power sample timestamp
 
   # ---------------------------------------------------------------------------
   # Input Variables
   # ---------------------------------------------------------------------------
   run_state_sensor: !input run_state_sensor
   non_running_state_ids: !input non_running_state_ids
+  pause_state_ids: !input pause_state_ids
   preparation_state_id: !input preparation_state_id
   error_message_sensor: !input error_message_sensor
   remaining_time_sensor: !input remaining_time_sensor
@@ -363,6 +481,10 @@ variables:
   tub_clean_counter_sensor: !input tub_clean_counter_sensor
   tub_clean_counter_threshold: !input tub_clean_counter_threshold
   run_state_completion_id: !input run_state_completion_id
+  show_estimated_end_time: !input show_estimated_end_time
+  power_sensor: !input power_sensor
+  energy_cost_per_kwh: !input energy_cost_per_kwh
+  enable_debug_notifications: !input enable_debug_notifications
 
   # ---------------------------------------------------------------------------
   # Message Templates
@@ -373,6 +495,9 @@ variables:
   message_preparation_template: !input message_preparation
   message_error_template: !input message_error
   message_tub_clean_template: !input message_tub_clean
+  message_paused_template: !input message_paused
+  message_resumed_template: !input message_resumed
+  message_energy_report_template: !input message_energy_report
 
   # ---------------------------------------------------------------------------
   # Computed State Values
@@ -400,6 +525,34 @@ variables:
       {% else %}
         {{ 0 }}
       {% endif %}
+    {% else %}
+      {{ 0 }}
+    {% endif %}
+
+  # Calculate estimated end time from remaining time
+  estimated_end_time: >
+    {% if remaining not in ['unknown', 'unavailable', '-'] %}
+      {% set parts = remaining.split(':') %}
+      {% if parts | length >= 2 %}
+        {% set hours = parts[0] | int %}
+        {% set minutes = parts[1] | int %}
+        {% set end_time = now() + timedelta(hours=hours, minutes=minutes) %}
+        {{ end_time.strftime('%H:%M') }}
+      {% else %}
+        {{ 'N/A' }}
+      {% endif %}
+    {% else %}
+      {{ 'N/A' }}
+    {% endif %}
+
+  # Check if device is paused
+  is_paused: >
+    {{ run_state in pause_state_ids }}
+
+  # Get current power consumption
+  current_power: >
+    {% if power_sensor is not none %}
+      {{ states(power_sensor) | float(0) }}
     {% else %}
       {{ 0 }}
     {% endif %}
@@ -432,9 +585,9 @@ variables:
   automation_state: "{{ automation_state_global.get(automation_state_key, dict()) }}"
 
   # ---------------------------------------------------------------------------
-  # Debug Flag
+  # Debug Flag (now controlled by input)
   # ---------------------------------------------------------------------------
-  is_debug: false
+  # enable_debug_notifications is loaded from input above
 
 # =============================================================================
 # ACTIONS
@@ -442,22 +595,27 @@ variables:
 action:
 
   # ---------------------------------------------------------------------------
-  # DEBUG: Log current state (enable by setting is_debug: true)
+  # DEBUG: Log current state (enabled via Debug input section)
   # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ is_debug }}"
+            value_template: "{{ enable_debug_notifications }}"
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Debug Info - Washing Machine"
+              title: "Debug - {{ device_name }}"
               message: >
-                run_state = {{ run_state }},
-                non_running_state_ids = {{ non_running_state_ids }},
-                remaining_time = {{ states(remaining_time_sensor) }},
-                is_running = {{ is_running }},
-                start_notification_sent = {{ automation_state.get(state_notification_about_start_sent, false) }}
+                Trigger: {{ trigger.entity_id }}
+                Run State: {{ run_state }}
+                Is Running: {{ is_running }}
+                Is Paused: {{ is_paused }}
+                Remaining: {{ remaining }}
+                Remaining Minutes: {{ remaining_time_in_minutes }}
+                Power: {{ current_power }} W
+                Start Sent: {{ automation_state.get(state_notification_about_start_sent, false) }}
+                Time-to-End Sent: {{ automation_state.get(state_notification_about_remaining_time_sent, false) }}
+                Pause Sent: {{ automation_state.get(state_notification_about_pause_sent, false) }}
 
   # ===========================================================================
   # MAIN STATE MACHINE - Handle different cycle events
@@ -485,11 +643,14 @@ action:
                   {% set ns.text = ns.text ~ ' ' ~ startup_info_texts[i] ~ ': [' ~ states(startup_info_sensors[i]) ~ '].' %}
                 {% endfor %}
                 {{ ns.text }}
+              # Get estimated end time string
+              est_end: "{{ estimated_end_time if show_estimated_end_time else '' }}"
               # Render the message template with available variables
               message: >
                 {% set tpl = message_start_template %}
                 {{ tpl | replace('{{ device_name }}', device_name)
                        | replace('{{ remaining }}', remaining)
+                       | replace('{{ estimated_end }}', est_end)
                        | replace('{{ details }}', details) }}
 
           # Send start notification
@@ -499,14 +660,32 @@ action:
             data:
               message: "{{ message }}"
 
-          # Mark start notification as sent
+          # Mark start notification as sent and initialize energy tracking
           - service: input_text.set_value
             target:
               entity_id: "{{ automation_state_entity }}"
             data:
               value: >
-                {% set new_automation_state = (automation_state | combine({ state_notification_about_start_sent: true })) %}
+                {% set new_automation_state = (automation_state | combine({
+                  state_notification_about_start_sent: true,
+                  state_cycle_start_time: now().isoformat(),
+                  state_energy_samples: 0,
+                  state_last_sample_time: now().isoformat()
+                })) %}
                 {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+
+          # Debug notification for start
+          - choose:
+              - conditions: "{{ enable_debug_notifications }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "{{ device_name }} - START"
+                      message: >
+                        Action: CYCLE STARTED
+                        Time: {{ now().strftime('%H:%M:%S') }}
+                        Duration: {{ remaining }}
+                        Estimated End: {{ estimated_end_time }}
 
       # -----------------------------------------------------------------------
       # CASE 2: Cycle Completed
@@ -521,10 +700,28 @@ action:
               and (states(run_state_sensor) in [run_state_completion_id, 'unknown', '-'] or states(remaining_time_sensor) in ['unknown', '-']) }}
         sequence:
           - variables:
+              # Calculate energy consumption
+              energy_wh: "{{ automation_state.get(state_energy_samples, 0) | float }}"
+              energy_kwh: "{{ (energy_wh / 1000) | round(3) }}"
+              energy_cost: >
+                {% if energy_cost_per_kwh > 0 %}
+                  {{ (energy_kwh * energy_cost_per_kwh) | round(2) }}
+                {% else %}
+                  {{ 0 }}
+                {% endif %}
+              # Build energy report string
+              energy_report: >
+                {% if power_sensor is not none and energy_kwh > 0 %}
+                  {% set tpl = message_energy_report_template %}
+                  {{ tpl | replace('{{ energy_kwh }}', energy_kwh | string)
+                         | replace('{{ energy_cost }}', energy_cost | string) }}
+                {% else %}
+                  {{ '' }}
+                {% endif %}
               # Render the message template with available variables
               message: >
                 {% set tpl = message_completed_template %}
-                {{ tpl | replace('{{ device_name }}', device_name) }}
+                {{ tpl | replace('{{ device_name }}', device_name) }}{{ energy_report }}
 
           # Send completion notification
           - service: notify.send_message
@@ -542,9 +739,24 @@ action:
                 {% set new_automation_state = (automation_state | combine({
                   state_notification_about_remaining_time_sent: false,
                   state_notification_about_start_sent: false,
-                  state_notification_about_preparation_sent: false
+                  state_notification_about_preparation_sent: false,
+                  state_notification_about_pause_sent: false,
+                  state_was_paused: false,
+                  state_energy_samples: 0
                 })) %}
                 {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+
+          # Debug notification for completion
+          - choose:
+              - conditions: "{{ enable_debug_notifications }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "{{ device_name }} - COMPLETE"
+                      message: >
+                        Action: CYCLE COMPLETED
+                        Time: {{ now().strftime('%H:%M:%S') }}
+                        Energy Used: {{ energy_kwh }} kWh
 
       # -----------------------------------------------------------------------
       # CASE 3: Preparation Mode Started
@@ -673,3 +885,138 @@ action:
               entity_id: !input notify_target
             data:
               message: "{{ message }}"
+
+      # -----------------------------------------------------------------------
+      # CASE 7: Cycle Paused
+      # -----------------------------------------------------------------------
+      # Triggered when: Device enters paused state during a cycle
+      # Action: Send pause notification
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ pause_state_ids | length > 0
+              and is_paused
+              and automation_state.get(state_notification_about_start_sent, false)
+              and not automation_state.get(state_notification_about_pause_sent, false) }}
+        sequence:
+          # Mark pause notification as sent
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({
+                  state_notification_about_pause_sent: true,
+                  state_was_paused: true
+                })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+
+          - variables:
+              message: >
+                {% set tpl = message_paused_template %}
+                {{ tpl | replace('{{ device_name }}', device_name)
+                       | replace('{{ remaining }}', remaining) }}
+
+          # Send pause notification
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: "{{ message }}"
+
+          # Debug notification for pause
+          - choose:
+              - conditions: "{{ enable_debug_notifications }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "{{ device_name }} - PAUSED"
+                      message: >
+                        Action: CYCLE PAUSED
+                        Time: {{ now().strftime('%H:%M:%S') }}
+                        Remaining: {{ remaining }}
+
+      # -----------------------------------------------------------------------
+      # CASE 8: Cycle Resumed
+      # -----------------------------------------------------------------------
+      # Triggered when: Device resumes after being paused
+      # Action: Send resume notification
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ is_running
+              and automation_state.get(state_was_paused, false)
+              and automation_state.get(state_notification_about_pause_sent, false) }}
+        sequence:
+          # Reset pause notification flag (keep was_paused for tracking)
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({
+                  state_notification_about_pause_sent: false
+                })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
+
+          - variables:
+              message: >
+                {% set tpl = message_resumed_template %}
+                {{ tpl | replace('{{ device_name }}', device_name)
+                       | replace('{{ remaining }}', remaining) }}
+
+          # Send resume notification
+          - service: notify.send_message
+            target:
+              entity_id: !input notify_target
+            data:
+              message: "{{ message }}"
+
+          # Debug notification for resume
+          - choose:
+              - conditions: "{{ enable_debug_notifications }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "{{ device_name }} - RESUMED"
+                      message: >
+                        Action: CYCLE RESUMED
+                        Time: {{ now().strftime('%H:%M:%S') }}
+                        Remaining: {{ remaining }}
+
+      # -----------------------------------------------------------------------
+      # CASE 9: Power Sample (Accumulate Energy)
+      # -----------------------------------------------------------------------
+      # Triggered when: Power sensor updates during running cycle
+      # Action: Accumulate energy consumption
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger.id == 'power_update'
+              and power_sensor is not none
+              and automation_state.get(state_notification_about_start_sent, false)
+              and is_running }}
+        sequence:
+          - variables:
+              last_sample: "{{ automation_state.get(state_last_sample_time, now().isoformat()) }}"
+              time_diff_hours: >
+                {% set last = last_sample | as_datetime %}
+                {% if last is not none %}
+                  {{ ((now() - last).total_seconds() / 3600) | float }}
+                {% else %}
+                  {{ 0 }}
+                {% endif %}
+              energy_increment: "{{ (current_power * time_diff_hours) | round(4) }}"
+              accumulated_energy: "{{ (automation_state.get(state_energy_samples, 0) | float + energy_increment) | round(4) }}"
+
+          # Update accumulated energy
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ automation_state_entity }}"
+            data:
+              value: >
+                {% set new_automation_state = (automation_state | combine({
+                  state_energy_samples: accumulated_energy,
+                  state_last_sample_time: now().isoformat()
+                })) %}
+                {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}

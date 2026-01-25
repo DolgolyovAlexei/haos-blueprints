@@ -138,13 +138,15 @@ blueprint:
             When this entity is ON, the device will be FORCED ON regardless of
             all other conditions (except being higher priority than emergency).
             Useful for manual override when you want the device always running.
-          default:
+            Leave empty to disable this feature.
+          default: []
           selector:
             entity:
               domain:
                 - input_boolean
                 - switch
                 - binary_sensor
+              multiple: true
 
     # -------------------------------------------------------------------------
     # Doors & Windows Configuration
@@ -407,8 +409,9 @@ action:
       # -----------------------------------------------------------------------
       # Force ON Check
       # -----------------------------------------------------------------------
+      # Check if any force ON entity is enabled (list may be empty)
       is_force_on: >
-        {{ force_on_entity is not none and is_state(force_on_entity, 'on') }}
+        {{ force_on_entity | length > 0 and force_on_entity | select('is_state', 'on') | list | length > 0 }}
 
       # -----------------------------------------------------------------------
       # Target Value & Hysteresis

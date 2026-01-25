@@ -1,0 +1,684 @@
+# =============================================================================
+# Thermostat Controller Blueprint
+# =============================================================================
+# This blueprint controls a thermostat/climate entity based on schedules,
+# presence, and various conditions.
+#
+# Features:
+#   - Schedule-based heating control (using HA schedule helper)
+#   - Working and standby temperature modes
+#   - Optional input_number overrides for temperatures
+#   - External temperature sensor support
+#   - Window/door sensor integration (disable when open)
+#   - Force heating override
+#   - Minimum on-time to prevent rapid cycling
+#   - Configurable behavior when disabled (off vs standby)
+#   - Debug notifications for troubleshooting
+#
+# Temperature Priority:
+#   1. Windows open → Turn off (or standby based on setting)
+#   2. Force heating ON → Working temperature
+#   3. Schedule active → Working temperature
+#   4. Schedule inactive → Standby temperature (or off)
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
+# =============================================================================
+
+blueprint:
+  name: "Custom: Thermostat Controller"
+  description: >
+    Controls a thermostat based on schedules, with support for working/standby
+    temperatures, window sensors, force heating override, and more.
+  domain: automation
+
+  input:
+    # -------------------------------------------------------------------------
+    # Thermostat Configuration
+    # -------------------------------------------------------------------------
+    thermostat_group:
+      name: Thermostat
+      collapsed: false
+      input:
+        thermostat_entity:
+          name: Thermostat
+          description: The climate entity to control
+          selector:
+            entity:
+              domain: climate
+
+        control_switch:
+          name: Control Switch
+          description: >
+            Master switch to enable/disable thermostat control.
+            When OFF, thermostat will be turned off or set to standby (based on setting).
+          selector:
+            entity:
+              domain:
+                - input_boolean
+                - switch
+                - binary_sensor
+
+        hvac_mode:
+          name: HVAC Mode
+          description: The HVAC mode to use when heating is active
+          default: heat
+          selector:
+            select:
+              options:
+                - heat
+                - cool
+                - heat_cool
+                - auto
+
+    # -------------------------------------------------------------------------
+    # Temperature Configuration
+    # -------------------------------------------------------------------------
+    temperature_group:
+      name: Temperature
+      collapsed: false
+      input:
+        working_temperature:
+          name: Working Temperature
+          description: Target temperature when schedule is active
+          default: 21
+          selector:
+            number:
+              min: 5
+              max: 35
+              step: 0.5
+              unit_of_measurement: °C
+              mode: slider
+
+        working_temperature_override:
+          name: Working Temperature Override (optional)
+          description: >
+            Input number entity to override working temperature.
+            If set and valid, this value will be used instead of the static value.
+          default: []
+          selector:
+            entity:
+              domain: input_number
+              multiple: false
+
+        standby_temperature:
+          name: Standby Temperature
+          description: Target temperature when schedule is inactive (if not turning off)
+          default: 16
+          selector:
+            number:
+              min: 5
+              max: 35
+              step: 0.5
+              unit_of_measurement: °C
+              mode: slider
+
+        standby_temperature_override:
+          name: Standby Temperature Override (optional)
+          description: >
+            Input number entity to override standby temperature.
+            If set and valid, this value will be used instead of the static value.
+          default: []
+          selector:
+            entity:
+              domain: input_number
+              multiple: false
+
+        external_temperature_sensor:
+          name: External Temperature Sensor (optional)
+          description: >
+            Use an external temperature sensor instead of the thermostat's built-in sensor.
+            Leave empty to use the thermostat's own temperature reading.
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              device_class: temperature
+              multiple: false
+
+    # -------------------------------------------------------------------------
+    # Schedule Configuration
+    # -------------------------------------------------------------------------
+    schedule_group:
+      name: Schedule
+      collapsed: false
+      input:
+        schedule_entities:
+          name: Schedule(s)
+          description: >
+            Schedule helpers that define when heating should be active.
+            Multiple schedules are combined (OR logic) - heating is active if ANY schedule is ON.
+            Create schedule helpers in Home Assistant UI with your desired time slots.
+          default: []
+          selector:
+            entity:
+              domain: schedule
+              multiple: true
+
+    # -------------------------------------------------------------------------
+    # Behavior Configuration
+    # -------------------------------------------------------------------------
+    behavior_group:
+      name: Behavior
+      collapsed: false
+      input:
+        disabled_behavior:
+          name: Behavior When Disabled/Inactive
+          description: >
+            What to do when control switch is OFF or schedule is inactive.
+            "Turn off" completely disables the thermostat.
+            "Set standby" keeps thermostat running at standby temperature.
+          default: standby
+          selector:
+            select:
+              options:
+                - label: Turn off thermostat
+                  value: "off"
+                - label: Set standby temperature
+                  value: standby
+
+        minimum_on_time:
+          name: Minimum On Time
+          description: >
+            Minimum time the thermostat must stay on before it can be turned off.
+            Prevents rapid cycling which can damage equipment.
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 60
+              unit_of_measurement: minutes
+              mode: slider
+
+    # -------------------------------------------------------------------------
+    # Window/Door Sensors
+    # -------------------------------------------------------------------------
+    window_group:
+      name: Window/Door Sensors
+      collapsed: true
+      input:
+        window_sensors:
+          name: Window/Door Sensors (optional)
+          description: >
+            Binary sensors for windows or doors. When any sensor is ON (open),
+            heating will be disabled to save energy.
+          default: []
+          selector:
+            entity:
+              domain: binary_sensor
+              device_class:
+                - window
+                - door
+                - opening
+              multiple: true
+
+        window_reaction_delay:
+          name: Window Reaction Delay
+          description: >
+            Time to wait after window opens before disabling heating.
+            Prevents turning off heating for brief window openings.
+          default: 30
+          selector:
+            number:
+              min: 0
+              max: 300
+              unit_of_measurement: seconds
+              mode: slider
+
+    # -------------------------------------------------------------------------
+    # Force Heating Override
+    # -------------------------------------------------------------------------
+    force_group:
+      name: Force Heating
+      collapsed: true
+      input:
+        force_heating_switch:
+          name: Force Heating Switch (optional)
+          description: >
+            When this switch is ON, heating will be forced to working temperature
+            regardless of schedule or other conditions (except open windows).
+          default: []
+          selector:
+            entity:
+              domain:
+                - input_boolean
+                - switch
+                - binary_sensor
+              multiple: false
+
+    # -------------------------------------------------------------------------
+    # Debug Configuration
+    # -------------------------------------------------------------------------
+    debug_group:
+      name: Debug
+      collapsed: true
+      input:
+        enable_debug_notifications:
+          name: Enable Debug Notifications
+          description: >
+            Send persistent notifications for debugging automation behavior.
+            Shows trigger details, conditions, and thermostat actions.
+          default: false
+          selector:
+            boolean:
+
+# Restart mode ensures latest state is always evaluated
+mode: restart
+
+# =============================================================================
+# Triggers
+# =============================================================================
+trigger:
+  # Home Assistant startup
+  - platform: homeassistant
+    event: start
+    id: 'startup_trigger'
+
+  # Control switch state change
+  - platform: state
+    entity_id: !input control_switch
+    id: 'control_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+  # Schedule state change (on/off) - any schedule
+  - platform: state
+    entity_id: !input schedule_entities
+    id: 'schedule_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+  # Force heating switch state change
+  - platform: state
+    entity_id: !input force_heating_switch
+    id: 'force_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+  # Window sensor state change
+  - platform: state
+    entity_id: !input window_sensors
+    id: 'window_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+  # Working temperature override change
+  - platform: state
+    entity_id: !input working_temperature_override
+    id: 'temp_override_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+  # Standby temperature override change
+  - platform: state
+    entity_id: !input standby_temperature_override
+    id: 'temp_override_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+  # External temperature sensor change (for display/logging)
+  - platform: state
+    entity_id: !input external_temperature_sensor
+    id: 'external_temp_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+# =============================================================================
+# Variables
+# =============================================================================
+variables:
+  # ---------------------------------------------------------------------------
+  # Input References
+  # ---------------------------------------------------------------------------
+  thermostat_entity: !input thermostat_entity
+  control_switch: !input control_switch
+  schedule_entities: !input schedule_entities
+  hvac_mode: !input hvac_mode
+
+  working_temperature_static: !input working_temperature
+  working_temperature_override: !input working_temperature_override
+  standby_temperature_static: !input standby_temperature
+  standby_temperature_override: !input standby_temperature_override
+  external_temperature_sensor: !input external_temperature_sensor
+
+  disabled_behavior: !input disabled_behavior
+  minimum_on_time: !input minimum_on_time
+
+  window_sensors: !input window_sensors
+  window_reaction_delay: !input window_reaction_delay
+
+  force_heating_switch: !input force_heating_switch
+  enable_debug_notifications: !input enable_debug_notifications
+
+  # ---------------------------------------------------------------------------
+  # Computed Values
+  # ---------------------------------------------------------------------------
+
+  # Control switch state (default to ON if unavailable)
+  control_on: >
+    {% set state = states(control_switch) %}
+    {% if state in ['unknown', 'unavailable'] %}
+      {{ false }}
+    {% else %}
+      {{ is_state(control_switch, 'on') }}
+    {% endif %}
+
+  # Schedule state - active if ANY schedule is ON
+  schedule_active: >
+    {% if schedule_entities | length > 0 %}
+      {% set active_schedules = schedule_entities | select('is_state', 'on') | list %}
+      {{ active_schedules | length > 0 }}
+    {% else %}
+      {{ false }}
+    {% endif %}
+
+  # Force heating state
+  force_heating_on: >
+    {% if force_heating_switch is not none and force_heating_switch | length > 0 %}
+      {{ is_state(force_heating_switch, 'on') }}
+    {% else %}
+      {{ false }}
+    {% endif %}
+
+  # Window sensors - check if any window is open
+  windows_open: >
+    {% if window_sensors | length > 0 %}
+      {% set open_windows = window_sensors | select('is_state', 'on') | list %}
+      {{ open_windows | length > 0 }}
+    {% else %}
+      {{ false }}
+    {% endif %}
+
+  # Get effective working temperature (override or static)
+  effective_working_temp: >
+    {% if working_temperature_override is not none and working_temperature_override | length > 0 %}
+      {% set override_val = states(working_temperature_override) %}
+      {% if override_val not in ['unknown', 'unavailable'] %}
+        {{ override_val | float(working_temperature_static) }}
+      {% else %}
+        {{ working_temperature_static }}
+      {% endif %}
+    {% else %}
+      {{ working_temperature_static }}
+    {% endif %}
+
+  # Get effective standby temperature (override or static)
+  effective_standby_temp: >
+    {% if standby_temperature_override is not none and standby_temperature_override | length > 0 %}
+      {% set override_val = states(standby_temperature_override) %}
+      {% if override_val not in ['unknown', 'unavailable'] %}
+        {{ override_val | float(standby_temperature_static) }}
+      {% else %}
+        {{ standby_temperature_static }}
+      {% endif %}
+    {% else %}
+      {{ standby_temperature_static }}
+    {% endif %}
+
+  # Get external temperature reading (if configured)
+  external_temperature: >
+    {% if external_temperature_sensor is not none and external_temperature_sensor | length > 0 %}
+      {% set temp = states(external_temperature_sensor) %}
+      {% if temp not in ['unknown', 'unavailable'] %}
+        {{ temp | float }}
+      {% else %}
+        {{ 'N/A' }}
+      {% endif %}
+    {% else %}
+      {{ 'N/A' }}
+    {% endif %}
+
+  # Current thermostat state
+  thermostat_current_state: >
+    {{ states(thermostat_entity) }}
+
+  # Current thermostat temperature setting
+  thermostat_current_temp: >
+    {{ state_attr(thermostat_entity, 'temperature') | float(0) }}
+
+  # Time since thermostat was last turned on (for minimum on-time check)
+  thermostat_on_duration: >
+    {% if states(thermostat_entity) != 'off' %}
+      {{ (now() - states[thermostat_entity].last_changed).total_seconds() / 60 }}
+    {% else %}
+      {{ 0 }}
+    {% endif %}
+
+  # Check if minimum on-time has elapsed
+  min_on_time_elapsed: >
+    {{ thermostat_on_duration >= minimum_on_time or states(thermostat_entity) == 'off' }}
+
+  # ---------------------------------------------------------------------------
+  # Decision Logic
+  # ---------------------------------------------------------------------------
+
+  # Determine target action: 'working', 'standby', or 'off'
+  target_action: >
+    {% if not control_on %}
+      {# Control switch is OFF #}
+      {% if disabled_behavior == 'off' %}
+        {{ 'off' }}
+      {% else %}
+        {{ 'standby' }}
+      {% endif %}
+    {% elif windows_open %}
+      {# Windows are open - disable heating #}
+      {% if disabled_behavior == 'off' %}
+        {{ 'off' }}
+      {% else %}
+        {{ 'standby' }}
+      {% endif %}
+    {% elif force_heating_on %}
+      {# Force heating is ON #}
+      {{ 'working' }}
+    {% elif schedule_active %}
+      {# Schedule is active #}
+      {{ 'working' }}
+    {% else %}
+      {# Schedule is inactive #}
+      {% if disabled_behavior == 'off' %}
+        {{ 'off' }}
+      {% else %}
+        {{ 'standby' }}
+      {% endif %}
+    {% endif %}
+
+  # Determine target temperature based on action
+  target_temperature: >
+    {% if target_action == 'working' %}
+      {{ effective_working_temp }}
+    {% elif target_action == 'standby' %}
+      {{ effective_standby_temp }}
+    {% else %}
+      {{ 0 }}
+    {% endif %}
+
+  # Check if thermostat needs to be updated
+  needs_update: >
+    {% if target_action == 'off' %}
+      {{ thermostat_current_state != 'off' and min_on_time_elapsed }}
+    {% else %}
+      {{ thermostat_current_state == 'off' or thermostat_current_temp != target_temperature | float }}
+    {% endif %}
+
+# =============================================================================
+# Actions
+# =============================================================================
+action:
+  # ---------------------------------------------------------------------------
+  # Debug Logging
+  # ---------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ enable_debug_notifications }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Thermostat Controller Debug"
+              message: >
+                Trigger: {{ trigger.id | default('manual') }}
+                Time: {{ now().strftime('%H:%M:%S') }}
+
+                Input States:
+                - control_on: {{ control_on }}
+                - schedule_active: {{ schedule_active }}
+                - force_heating_on: {{ force_heating_on }}
+                - windows_open: {{ windows_open }}
+
+                Temperatures:
+                - effective_working: {{ effective_working_temp }}°C
+                - effective_standby: {{ effective_standby_temp }}°C
+                - external_sensor: {{ external_temperature }}
+                - thermostat_current: {{ thermostat_current_temp }}°C
+
+                Decision:
+                - target_action: {{ target_action }}
+                - target_temperature: {{ target_temperature }}°C
+                - needs_update: {{ needs_update }}
+                - min_on_time_elapsed: {{ min_on_time_elapsed }}
+
+  # ---------------------------------------------------------------------------
+  # Window Reaction Delay
+  # ---------------------------------------------------------------------------
+  # If triggered by window opening, wait for reaction delay
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'window_trigger' and windows_open and window_reaction_delay > 0 }}"
+        sequence:
+          - delay:
+              seconds: "{{ window_reaction_delay }}"
+          # Re-check if windows are still open after delay
+          - condition: template
+            value_template: >
+              {% set open_windows = window_sensors | select('is_state', 'on') | list %}
+              {{ open_windows | length > 0 }}
+
+  # ---------------------------------------------------------------------------
+  # Apply Thermostat Settings
+  # ---------------------------------------------------------------------------
+  - choose:
+      # CASE 1: Turn OFF thermostat
+      - conditions:
+          - condition: template
+            value_template: "{{ target_action == 'off' and min_on_time_elapsed }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ thermostat_current_state != 'off' }}"
+                sequence:
+                  - service: climate.turn_off
+                    target:
+                      entity_id: "{{ thermostat_entity }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ enable_debug_notifications }}"
+                        sequence:
+                          - service: persistent_notification.create
+                            data:
+                              title: "Thermostat Controller"
+                              message: "Action: Turned OFF thermostat"
+
+      # CASE 2: Set WORKING temperature
+      - conditions:
+          - condition: template
+            value_template: "{{ target_action == 'working' }}"
+        sequence:
+          - choose:
+              # Turn on if currently off
+              - conditions:
+                  - condition: template
+                    value_template: "{{ thermostat_current_state == 'off' }}"
+                sequence:
+                  - service: climate.set_hvac_mode
+                    target:
+                      entity_id: "{{ thermostat_entity }}"
+                    data:
+                      hvac_mode: "{{ hvac_mode }}"
+          # Set temperature
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ thermostat_current_temp != effective_working_temp | float }}"
+                sequence:
+                  - service: climate.set_temperature
+                    target:
+                      entity_id: "{{ thermostat_entity }}"
+                    data:
+                      temperature: "{{ effective_working_temp }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ enable_debug_notifications }}"
+                        sequence:
+                          - service: persistent_notification.create
+                            data:
+                              title: "Thermostat Controller"
+                              message: "Action: Set WORKING temperature to {{ effective_working_temp }}°C"
+
+      # CASE 3: Set STANDBY temperature
+      - conditions:
+          - condition: template
+            value_template: "{{ target_action == 'standby' }}"
+        sequence:
+          - choose:
+              # Turn on if currently off
+              - conditions:
+                  - condition: template
+                    value_template: "{{ thermostat_current_state == 'off' }}"
+                sequence:
+                  - service: climate.set_hvac_mode
+                    target:
+                      entity_id: "{{ thermostat_entity }}"
+                    data:
+                      hvac_mode: "{{ hvac_mode }}"
+          # Set temperature
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ thermostat_current_temp != effective_standby_temp | float }}"
+                sequence:
+                  - service: climate.set_temperature
+                    target:
+                      entity_id: "{{ thermostat_entity }}"
+                    data:
+                      temperature: "{{ effective_standby_temp }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ enable_debug_notifications }}"
+                        sequence:
+                          - service: persistent_notification.create
+                            data:
+                              title: "Thermostat Controller"
+                              message: "Action: Set STANDBY temperature to {{ effective_standby_temp }}°C"

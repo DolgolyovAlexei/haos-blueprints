@@ -2641,9 +2641,20 @@ action:
 
               # Parse preset JSON format
               preset_str: "{{ value_sequence[next_index] | trim }}"
+              parsed_json: "{{ preset_str | from_json(default=none) }}"
+
+          # Validate JSON parsing succeeded
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: '{{ parsed_json is none }}'
+                sequence:
+                  - stop: "Invalid JSON in preset. Ensure you use double quotes, not single quotes. Got: {{ preset_str }}"
+
+          - variables:
               light_data: >
                 {% set ns = namespace(res=dict(), brightness_found=False) %}
-                {% set parsed = preset_str | from_json %}
+                {% set parsed = parsed_json %}
                 {% for key, value in parsed.items() %}
                   {% if key == 'brightness' %}
                     {% set ns.res = ns.res | combine({ 'brightness': value | int }) %}

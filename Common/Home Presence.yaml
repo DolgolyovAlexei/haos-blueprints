@@ -2,13 +2,27 @@
 # Home Presence Controller Blueprint
 # =============================================================================
 # This blueprint determines home presence/occupancy based on multiple signals:
-# - Door sensors (temporary presence when door recently opened)
+# - Activity sensors (presence assumed if any sensor changed state recently)
 # - Person/presence entities (tracking if someone is home)
-# - Motion sensors (detecting movement)
 # - Wi-Fi connection (devices connected to home network)
+# - Bluetooth/BLE devices (device trackers reporting home/away)
 #
 # The result is stored in an input_boolean helper that other automations
 # can use to determine if someone is likely home.
+#
+# Features:
+#   - Multiple signal sources for robust presence detection
+#   - Activity sensors with configurable threshold (door, motion, etc.)
+#   - Guest mode override for manual presence control
+#   - Bluetooth device tracker support
+#   - Debug notifications for troubleshooting
+#   - Graceful handling of unavailable sensors
+#   - Automatic evaluation on Home Assistant startup
+#
+# Signal Priority:
+#   1. Guest mode (forces presence ON when enabled)
+#   2. Stable signals (person entities, Wi-Fi, Bluetooth)
+#   3. Activity sensors (temporary presence based on recent state changes)
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
@@ -16,9 +30,9 @@
 blueprint:
   name: "Custom: Home Presence Controller"
   description: >
-    Determines home presence based on multiple signals including door sensors,
-    person entities, motion sensors, and Wi-Fi connections. Outputs the result
-    to an input_boolean helper for use by other automations.
+    Determines home presence based on multiple signals including activity sensors,
+    person entities, Wi-Fi connections, and Bluetooth devices.
+    Outputs the result to an input_boolean helper for use by other automations.
   domain: automation
 
   input:
@@ -46,27 +60,28 @@ blueprint:
                 - binary_sensor
 
     # -------------------------------------------------------------------------
-    # Door Sensor Configuration
+    # Activity Sensor Configuration
     # -------------------------------------------------------------------------
-    door_group:
-      name: Door
+    activity_group:
+      name: Activity
       collapsed: false
       input:
-        door_sensors:
-          name: Door Sensor(s)
-          description: Door sensors to monitor for entry/exit detection
+        activity_sensors:
+          name: Activity Sensor(s)
+          description: >
+            Entities that indicate activity (door, motion, occupancy, switches, etc.).
+            Presence is assumed if any entity's state changed within the threshold period.
+            Supports: binary_sensor, sensor, input_boolean, switch, light, and more.
           default: []
           selector:
             entity:
               multiple: true
-              domain: binary_sensor
-              device_class: door
 
-        door_sensor_threshold:
-          name: Door Sensor Duration Threshold
+        activity_sensor_threshold:
+          name: Activity Sensor Threshold
           description: >
-            Time window after door activity to assume someone might be present.
-            After this duration, presence will be re-evaluated based on other sensors.
+            Time window after any activity sensor state change to assume presence.
+            After this duration, presence will be re-evaluated based on other signals.
           default: 60
           selector:
             number:
@@ -89,18 +104,6 @@ blueprint:
           selector:
             entity:
               domain: person
-              multiple: true
-
-        motion_sensors:
-          name: Motion Sensors
-          description: Motion or occupancy sensors to detect movement
-          default: []
-          selector:
-            entity:
-              domain: binary_sensor
-              device_class:
-                - motion
-                - occupancy
               multiple: true
 
     # -------------------------------------------------------------------------
@@ -127,6 +130,59 @@ blueprint:
             text:
               multiple: true
 
+    # -------------------------------------------------------------------------
+    # Bluetooth Detection Configuration
+    # -------------------------------------------------------------------------
+    bluetooth_group:
+      name: Bluetooth
+      collapsed: true
+      input:
+        bluetooth_device_trackers:
+          name: Bluetooth Device Trackers
+          description: >
+            Device trackers that report home/away status via Bluetooth/BLE.
+            These are checked for 'home' state to indicate presence.
+          default: []
+          selector:
+            entity:
+              domain: device_tracker
+              multiple: true
+
+    # -------------------------------------------------------------------------
+    # Guest Mode Configuration
+    # -------------------------------------------------------------------------
+    guest_mode_group:
+      name: Guest Mode
+      collapsed: true
+      input:
+        guest_mode_switch:
+          name: Guest Mode Switch (optional)
+          description: >
+            Input boolean that forces presence ON when enabled.
+            Useful when guests are home without tracked devices.
+            Leave empty to disable guest mode feature.
+          default: []
+          selector:
+            entity:
+              domain: input_boolean
+              multiple: false
+
+    # -------------------------------------------------------------------------
+    # Debug Configuration
+    # -------------------------------------------------------------------------
+    debug_group:
+      name: Debug
+      collapsed: true
+      input:
+        enable_debug_notifications:
+          name: Enable Debug Notifications
+          description: >
+            Send persistent notifications for debugging automation behavior.
+            Shows trigger details, sensor states, and presence decisions.
+          default: false
+          selector:
+            boolean:
+
 # Restart mode ensures that if a new trigger occurs while processing,
 # the automation restarts with fresh sensor values
 mode: restart
@@ -135,20 +191,32 @@ mode: restart
 # Triggers - Events that cause presence to be re-evaluated
 # =============================================================================
 trigger:
-  # Door sensor state changes (opened/closed)
+  # Home Assistant startup - evaluate presence on restart
+  - platform: homeassistant
+    event: start
+    id: 'startup_trigger'
+
+  # Activity sensor state changes - only real state changes
   - platform: state
-    entity_id: !input door_sensors
-    id: 'door_trigger'
+    entity_id: !input activity_sensors
+    id: 'activity_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
 
   # Person entity state changes (home/away)
   - platform: state
     entity_id: !input presence_sensors
     id: 'presence_trigger'
-
-  # Motion sensor state changes (detected/clear)
-  - platform: state
-    entity_id: !input motion_sensors
-    id: 'motion_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
 
   # Control switch toggled (enable/disable detection)
   - platform: state
@@ -159,87 +227,174 @@ trigger:
   - platform: state
     entity_id: !input wifi_id_sensors
     id: 'wifi_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+  # Bluetooth device tracker state changes (home/away)
+  - platform: state
+    entity_id: !input bluetooth_device_trackers
+    id: 'bluetooth_trigger'
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+  # Guest mode switch toggled
+  - platform: state
+    entity_id: !input guest_mode_switch
+    id: 'guest_mode_trigger'
 
 # =============================================================================
 # Variables - Computed values for presence determination
 # =============================================================================
 variables:
-  # Debug mode flag - set to true to enable persistent notifications
-  is_debug: false
-
-  # Input references (required for use in templates)
+  # ---------------------------------------------------------------------------
+  # Input References
+  # ---------------------------------------------------------------------------
   wifi_id_sensors: !input wifi_id_sensors
   home_wifi_ids: !input home_wifi_ids
   control_switch: !input control_switch
   result_value_entity: !input result_value_entity
-  motion_sensors: !input motion_sensors
+  activity_sensors: !input activity_sensors
+  activity_sensor_threshold: !input activity_sensor_threshold
   presence_sensors: !input presence_sensors
-  door_sensors: !input door_sensors
-  door_sensor_threshold: !input door_sensor_threshold
+  bluetooth_device_trackers: !input bluetooth_device_trackers
+  guest_mode_switch: !input guest_mode_switch
+  enable_debug_notifications: !input enable_debug_notifications
 
-  # Check if any door sensor was activated within the threshold period
-  # This provides a temporary "presence assumed" window when doors are used
-  door_on: >
-    {% set ns = namespace(items=[]) %}
-    {% for s in door_sensors %}
-      {% if states(s) not in ['unknown', 'unavailable']
-         and (now() - states[s].last_changed).total_seconds() < door_sensor_threshold %}
-        {% set ns.items = ns.items + [s] %}
-      {% endif %}
-    {% endfor %}
-    {{ ns.items | count > 0 }}
+  # ---------------------------------------------------------------------------
+  # Control Switch State (with unavailable handling)
+  # ---------------------------------------------------------------------------
+  # If control switch is unavailable/unknown, default to ON to prevent
+  # presence from being stuck in wrong state
+  control_switch_on: >
+    {% set state = states(control_switch) %}
+    {% if state in ['unknown', 'unavailable'] %}
+      {{ true }}
+    {% else %}
+      {{ is_state(control_switch, 'on') }}
+    {% endif %}
 
+  # ---------------------------------------------------------------------------
+  # Guest Mode Check
+  # ---------------------------------------------------------------------------
+  # Guest mode forces presence ON regardless of other sensors
+  guest_mode_on: >
+    {% if guest_mode_switch is not none and guest_mode_switch | length > 0 %}
+      {{ is_state(guest_mode_switch, 'on') }}
+    {% else %}
+      {{ false }}
+    {% endif %}
+
+  # ---------------------------------------------------------------------------
+  # Activity Sensors
+  # ---------------------------------------------------------------------------
+  # Check if any activity sensor's state changed within the threshold period
+  # This provides a temporary "presence assumed" window based on recent activity
+  activity_on: >
+    {% if activity_sensors | length > 0 %}
+      {% set ns = namespace(active=[]) %}
+      {% for s in activity_sensors %}
+        {% set state = states(s) %}
+        {% if state not in ['unknown', 'unavailable']
+           and (now() - states[s].last_changed).total_seconds() < activity_sensor_threshold %}
+          {% set ns.active = ns.active + [s] %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.active | length > 0 }}
+    {% else %}
+      {{ false }}
+    {% endif %}
+
+  # ---------------------------------------------------------------------------
+  # Person/Presence Sensors
+  # ---------------------------------------------------------------------------
   # Check if any tracked person is currently home
   presence_on: >
-    {{ (presence_sensors | select('is_state', 'home') | list | length > 0) | bool
-       if presence_sensors | length > 0 else false }}
+    {% if presence_sensors | length > 0 %}
+      {% set home_persons = presence_sensors | select('is_state', 'home') | list %}
+      {{ home_persons | length > 0 }}
+    {% else %}
+      {{ false }}
+    {% endif %}
 
-  # Check if any motion sensor is currently detecting motion
-  motion_on: >
-    {{ (motion_sensors | select('is_state', 'on') | list | length > 0) | bool
-       if motion_sensors | length > 0 else false }}
-
+  # ---------------------------------------------------------------------------
+  # Wi-Fi Detection
+  # ---------------------------------------------------------------------------
   # Check if any device is connected to a home Wi-Fi network
   wifi_on: >
-    {{ expand(wifi_id_sensors)
-       | map(attribute='state')
-       | select('in', home_wifi_ids)
-       | list
-       | length > 0 }}
+    {% if wifi_id_sensors | length > 0 and home_wifi_ids | length > 0 %}
+      {{ expand(wifi_id_sensors)
+         | map(attribute='state')
+         | select('in', home_wifi_ids)
+         | list
+         | length > 0 }}
+    {% else %}
+      {{ false }}
+    {% endif %}
 
-  # Combined presence check (excluding door) - requires control switch to be on
-  is_on_except_door: "{{ (motion_on or presence_on or wifi_on) and is_state(control_switch, 'on') }}"
+  # ---------------------------------------------------------------------------
+  # Bluetooth Detection
+  # ---------------------------------------------------------------------------
+  # Check if any Bluetooth device tracker is reporting 'home'
+  bluetooth_on: >
+    {% if bluetooth_device_trackers | length > 0 %}
+      {% set home_devices = bluetooth_device_trackers | select('is_state', 'home') | list %}
+      {{ home_devices | length > 0 }}
+    {% else %}
+      {{ false }}
+    {% endif %}
 
-  # Final presence determination - door provides temporary override
-  is_on: "{{ is_on_except_door or door_on }}"
+  # ---------------------------------------------------------------------------
+  # Combined Presence Determination
+  # ---------------------------------------------------------------------------
+  # Stable signal sources (excluding activity threshold which is temporary)
+  is_on_stable: >
+    {{ (presence_on or wifi_on or bluetooth_on) and control_switch_on }}
+
+  # Final presence determination:
+  # 1. Guest mode forces ON
+  # 2. Otherwise, stable signals OR activity threshold window
+  is_on: "{{ guest_mode_on or is_on_stable or activity_on }}"
 
 # =============================================================================
 # Actions - Update presence state based on computed values
 # =============================================================================
 action:
   # -------------------------------------------------------------------------
-  # Debug Logging (optional)
+  # Debug Logging (enabled via Debug input section)
   # -------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ is_debug }}"
+            value_template: "{{ enable_debug_notifications }}"
         sequence:
           - service: persistent_notification.create
             data:
               title: "Home Presence Debug"
               message: >
                 Trigger: {{ trigger.id | default('unknown') }}
+                Time: {{ now().strftime('%H:%M:%S') }}
 
                 Sensor States:
-                - motion_on: {{ motion_on }}
-                - door_on: {{ door_on }}
+                - activity_on: {{ activity_on }}
                 - presence_on: {{ presence_on }}
                 - wifi_on: {{ wifi_on }}
+                - bluetooth_on: {{ bluetooth_on }}
+                - guest_mode_on: {{ guest_mode_on }}
+                - control_switch_on: {{ control_switch_on }}
 
                 Combined:
-                - is_on_except_door: {{ is_on_except_door }}
+                - is_on_stable: {{ is_on_stable }}
                 - is_on: {{ is_on }}
+
+                Result: {{ 'HOME' if is_on else 'AWAY' }}
 
   # -------------------------------------------------------------------------
   # Update Result Entity
@@ -258,18 +413,33 @@ action:
           entity_id: "{{ result_value_entity }}"
 
   # -------------------------------------------------------------------------
-  # Door Sensor Delayed Re-evaluation
+  # Activity Sensor Delayed Re-evaluation
   # -------------------------------------------------------------------------
-  # When triggered by a door sensor and no other presence indicators are active,
+  # When triggered by activity and no stable presence indicators are active,
   # wait for the threshold duration then turn off presence.
-  # If another trigger occurs during the delay, the automation restarts (mode: restart)
-  # and re-evaluates with fresh data.
+  # If another trigger occurs during the delay, the automation restarts
+  # (mode: restart) and re-evaluates with fresh data.
   - condition: template
-    value_template: "{{ (not is_on_except_door) and trigger.id == 'door_trigger' }}"
+    value_template: "{{ (not is_on_stable) and (not guest_mode_on) and trigger.id == 'activity_trigger' }}"
 
   - delay:
-      seconds: "{{ door_sensor_threshold }}"
+      seconds: "{{ activity_sensor_threshold }}"
 
   - service: input_boolean.turn_off
     target:
       entity_id: "{{ result_value_entity }}"
+
+  # Debug notification for delayed turn-off
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ enable_debug_notifications }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Home Presence Debug"
+              message: >
+                Action: DELAYED TURN OFF
+                Time: {{ now().strftime('%H:%M:%S') }}
+                Delay: {{ activity_sensor_threshold }}s
+                Result: AWAY

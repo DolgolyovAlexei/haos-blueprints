@@ -13,6 +13,8 @@
 #
 # Features:
 #   - Automatic on/off based on target value (temperature, humidity, etc.)
+#   - Hysteresis window to prevent rapid on/off cycling
+#   - Force ON override (manual override to keep device always on)
 #   - Window/door sensor integration (turns off when open for efficiency)
 #   - Decay duration (waits before reacting to door/window changes)
 #   - Emergency threshold (forces device ON below critical value)
@@ -21,10 +23,19 @@
 #   - House-wide and room-specific window/door sensors
 #
 # Control Logic (in priority order):
-#   1. If value is below emergency threshold → FORCE ON (override all)
-#   2. If control switch is OFF → FORCE OFF
-#   3. If (house OR room is sealed) AND schedule active AND value below target → ON
-#   4. Otherwise → OFF
+#   1. If Force ON switch is ON → FORCE ON (manual override)
+#   2. If value is below emergency threshold → FORCE ON (safety override)
+#   3. If control switch is OFF → FORCE OFF
+#   4. If environment not sealed OR schedule not active → OFF
+#   5. If value at or above target → OFF (target reached)
+#   6. If value below turn-on threshold (target - hysteresis) → ON
+#   7. Otherwise → maintain current state (in hysteresis zone)
+#
+# Hysteresis Example (prevents rapid cycling):
+#   - Target humidity: 30%, Hysteresis window: 5%
+#   - Device turns OFF when humidity reaches 30%
+#   - Device turns ON when humidity drops to 25% (30% - 5%)
+#   - Between 25-30%: device maintains its current state
 #
 # Window/Door Logic:
 #   - "House closed" = ALL house windows are closed (for decay duration)
@@ -121,6 +132,20 @@ blueprint:
                 - binary_sensor
                 - input_boolean
 
+        force_on_entity:
+          name: Force ON Switch (optional)
+          description: >
+            When this entity is ON, the device will be FORCED ON regardless of
+            all other conditions (except being higher priority than emergency).
+            Useful for manual override when you want the device always running.
+          default:
+          selector:
+            entity:
+              domain:
+                - input_boolean
+                - switch
+                - binary_sensor
+
     # -------------------------------------------------------------------------
     # Doors & Windows Configuration
     # -------------------------------------------------------------------------
@@ -196,10 +221,25 @@ blueprint:
           name: Target Value Entity
           description: >
             Entity (e.g., input_number) that defines the target value.
-            Device turns ON when sensor value is below this target.
+            Device turns OFF when sensor value reaches this target.
           selector:
             entity:
               domain: input_number
+
+        hysteresis_window:
+          name: Hysteresis Window
+          description: >
+            Buffer zone to prevent rapid on/off cycling.
+            Device turns ON when value drops below (target - window).
+            Example: Target 30%, window 5% → turns OFF at 30%, turns ON at 25%.
+            Set to 0 to disable hysteresis (device toggles exactly at target).
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 50
+              step: 0.5
+              mode: slider
 
         value_threshold:
           name: Emergency Threshold
@@ -306,6 +346,10 @@ trigger:
   - platform: state
     entity_id: !input control_switch
 
+  # Force ON switch state changed
+  - platform: state
+    entity_id: !input force_on_entity
+
   # House window sensor changed (with decay delay)
   - platform: state
     entity_id: !input house_windows
@@ -357,18 +401,28 @@ action:
       device_entity: !input device_entity
       threshold: !input value_threshold
       value_is_low_entity: !input value_is_low_entity
+      force_on_entity: !input force_on_entity
+      hysteresis_window: !input hysteresis_window
 
       # -----------------------------------------------------------------------
-      # Target Value
+      # Force ON Check
+      # -----------------------------------------------------------------------
+      is_force_on: >
+        {{ force_on_entity is not none and is_state(force_on_entity, 'on') }}
+
+      # -----------------------------------------------------------------------
+      # Target Value & Hysteresis
       # -----------------------------------------------------------------------
       target_value_entity: !input target_value_entity
       target_value: "{{ states(target_value_entity) | float(0) }}"
+      # Turn-on threshold accounts for hysteresis window
+      turn_on_threshold: "{{ target_value - hysteresis_window }}"
 
       # -----------------------------------------------------------------------
       # Value Statistics
       # -----------------------------------------------------------------------
-      # Calculate how many sensors are below threshold and target
-      # Returns: [count_below_threshold, count_below_target]
+      # Calculate sensor counts for different thresholds
+      # Returns: [count_below_emergency, count_below_turn_on, count_at_or_above_target]
       value_stats: >
         {% set result = [] %}
         {% if env_sensors | length > 0 %}
@@ -379,21 +433,29 @@ action:
           {% else %}
             {% set result = result + [0] %}
           {% endif %}
-          {# Count sensors below target value #}
+          {# Count sensors below turn-on threshold (target - hysteresis) #}
+          {% if turn_on_threshold != 0 %}
+            {% set result = result + [values | select('lt', turn_on_threshold) | list | count] %}
+          {% else %}
+            {% set result = result + [0] %}
+          {% endif %}
+          {# Count sensors at or above target value (for turn-off decision) #}
           {% if target_value != 0 %}
-            {% set result = result + [values | select('lt', target_value) | list | count] %}
+            {% set result = result + [values | select('ge', target_value) | list | count] %}
           {% else %}
             {% set result = result + [0] %}
           {% endif %}
         {% else %}
-          {% set result = [0, 0] %}
+          {% set result = [0, 0, 0] %}
         {% endif %}
         {{ result }}
 
       # True if ANY sensor is below the emergency threshold
       is_value_below_threshold: "{{ (value_stats[0] | int) > 0 }}"
-      # True if ANY sensor is below the target value
-      is_value_below_target_value: "{{ (value_stats[1] | int) > 0 }}"
+      # True if ANY sensor is below the turn-on threshold (target - hysteresis)
+      is_value_below_turn_on_threshold: "{{ (value_stats[1] | int) > 0 }}"
+      # True if ALL sensors are at or above the target value
+      is_value_at_or_above_target: "{{ (value_stats[2] | int) == (env_sensors | length) and (env_sensors | length) > 0 }}"
 
       # -----------------------------------------------------------------------
       # Power Monitoring
@@ -476,10 +538,14 @@ action:
             data:
               title: "Climate Controller (debug)"
               message: >
+                is_force_on = {{ is_force_on }},
                 room_closed = {{ room_closed }},
                 house_closed = {{ house_closed }},
                 is_value_below_threshold = {{ is_value_below_threshold }},
-                is_value_below_target_value = {{ is_value_below_target_value }},
+                is_value_below_turn_on_threshold = {{ is_value_below_turn_on_threshold }},
+                is_value_at_or_above_target = {{ is_value_at_or_above_target }},
+                target_value = {{ target_value }},
+                turn_on_threshold = {{ turn_on_threshold }},
                 schedule_active = {{ schedule_active }},
                 control_switch = {{ states(control_switch) }}
 
@@ -544,7 +610,16 @@ action:
   - choose:
 
       # -----------------------------------------------------------------------
-      # PRIORITY 1: Emergency Override
+      # PRIORITY 1: Force ON Override (Manual)
+      # -----------------------------------------------------------------------
+      # If force ON switch is enabled, FORCE device ON regardless of all else
+      - conditions:
+          - condition: template
+            value_template: "{{ is_force_on }}"
+        sequence: !input turn_on_action
+
+      # -----------------------------------------------------------------------
+      # PRIORITY 2: Emergency Override (Safety)
       # -----------------------------------------------------------------------
       # If value is below emergency threshold, FORCE device ON
       - conditions:
@@ -553,7 +628,7 @@ action:
         sequence: !input turn_on_action
 
       # -----------------------------------------------------------------------
-      # PRIORITY 2: Control Switch Off
+      # PRIORITY 3: Control Switch Off
       # -----------------------------------------------------------------------
       # If master control is disabled, FORCE device OFF
       - conditions:
@@ -562,16 +637,35 @@ action:
         sequence: !input turn_off_action
 
       # -----------------------------------------------------------------------
-      # PRIORITY 3: Normal Operation
+      # PRIORITY 4: Environment Not Ready
       # -----------------------------------------------------------------------
-      # If environment is sealed AND schedule active AND value needs adjustment
+      # If environment not sealed OR schedule not active, turn OFF
       - conditions:
           - condition: template
-            value_template: "{{ (house_closed or room_closed) and schedule_active and is_value_below_target_value }}"
+            value_template: "{{ not (house_closed or room_closed) or not schedule_active }}"
+        sequence: !input turn_off_action
+
+      # -----------------------------------------------------------------------
+      # PRIORITY 5: Target Reached
+      # -----------------------------------------------------------------------
+      # If all sensors at or above target value, turn OFF
+      - conditions:
+          - condition: template
+            value_template: "{{ is_value_at_or_above_target }}"
+        sequence: !input turn_off_action
+
+      # -----------------------------------------------------------------------
+      # PRIORITY 6: Below Turn-On Threshold
+      # -----------------------------------------------------------------------
+      # If any sensor below turn-on threshold (target - hysteresis), turn ON
+      - conditions:
+          - condition: template
+            value_template: "{{ is_value_below_turn_on_threshold }}"
         sequence: !input turn_on_action
 
     # -------------------------------------------------------------------------
-    # DEFAULT: Turn device OFF
+    # DEFAULT: Maintain Current State (Hysteresis Zone)
     # -------------------------------------------------------------------------
-    # None of the above conditions met - turn off for energy efficiency
-    default: !input turn_off_action
+    # Value is between turn-on threshold and target - don't change device state
+    # This prevents rapid on/off cycling when value is near the target
+    default: []

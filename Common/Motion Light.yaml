@@ -8,13 +8,22 @@
 # Features:
 #   - Multiple motion sensor support (triggers on ANY sensor)
 #   - Condition switches (ALL must be ON for automation to work)
-#   - Light and/or switch control
+#   - Multiple lights and/or switches control
+#   - Light groups and area-based targeting
 #   - Configurable timeout delay before turning off
+#   - Minimum on duration (prevents rapid on/off cycling)
+#   - Motion sensor debounce (filter false triggers)
+#   - Smooth light transitions with configurable duration
 #   - Luminance sensor support (only trigger in dark conditions)
+#   - Time-based conditions (only active during specified hours)
+#   - Day/Night mode (different light settings based on time)
+#   - Scene support (activate scenes instead of light parameters)
+#   - Dim before off (visual warning before turning off)
 #   - Manual override detection (stops automation if user changes light)
 #   - Brightness threshold (only trigger if light is dim)
 #   - Custom light parameters (brightness, color, etc.)
 #   - Callback actions for enable/disable/manual events
+#   - Debug notifications for troubleshooting
 #
 # State Machine:
 #   The automation tracks these states via persistent storage:
@@ -28,11 +37,13 @@
 #   - If user changes light while automation is active, enters MANUAL mode
 #   - MANUAL mode exits when light is turned OFF (by any means)
 #   - Timeout delay only applies when turning OFF (motion cleared)
+#   - Time conditions support overnight windows (e.g., 22:00 to 06:00)
+#   - Day/Night mode uses separate time window from time conditions
 #
 # Requirements:
 #   - At least one motion sensor
 #   - input_text entity for persistent state storage
-#   - Target light and/or switch to control
+#   - Target light(s), switch(es), group, or area to control
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
@@ -97,14 +108,40 @@ blueprint:
       name: "Devices"
       collapsed: false
       input:
-        target_light:
-          name: Target Light (optional)
-          description: "Light to control. Supports single light only."
+        target_lights:
+          name: Target Lights (optional)
+          description: One or more lights to control
           default: []
           selector:
             entity:
               domain: light
               multiple: true
+
+        target_switches:
+          name: Target Switches (optional)
+          description: One or more switches to control
+          default: []
+          selector:
+            entity:
+              domain: switch
+              multiple: true
+
+        target_light_group:
+          name: Target Light Group (optional)
+          description: A light group entity to control as a single unit
+          default: null
+          selector:
+            entity:
+              domain: light
+
+        target_area:
+          name: Target Area (optional)
+          description: >
+            Area ID (e.g., "living_room"). All lights and switches in the
+            area will be discovered and controlled.
+          default: ""
+          selector:
+            text:
 
         target_light_data:
           name: Light Data Dictionary (optional)
@@ -114,9 +151,8 @@ blueprint:
             If not specified, the light's last settings are preserved.
             Example:
               brightness: 200
-              color_temp: 350
+              color_temp_kelvin: 4000
               rgb_color: [255, 0, 0]
-              effect: rainbow
           selector:
             object: {}
 
@@ -132,27 +168,44 @@ blueprint:
               max: 255
               step: 1
 
-        target_switch:
-          name: Target Switch (optional)
-          description: "Switch to control. Supports single switch only."
-          default: []
+        transition_duration:
+          name: Transition Duration
+          description: >
+            Duration in seconds for smooth light transitions.
+            Set to 0 for instant changes.
+          default: 1
           selector:
-            entity:
-              domain: switch
-              multiple: true
+            number:
+              min: 0
+              max: 10
+              step: 0.5
+              unit_of_measurement: "s"
 
         timeout_delay:
-          name: Timeout delay (seconds)
+          name: Timeout Delay (seconds)
           description: >
             Delay before turning off the light after all motion sensors
             clear. Set to 0 for immediate turn off.
-          default: 0
+          default: 120
           selector:
             number:
               min: 0
               max: 3600
-              step: 1
+              step: 5
               unit_of_measurement: seconds
+
+        min_on_duration:
+          name: Minimum On Duration (seconds)
+          description: >
+            Light must stay on for at least this duration even if motion
+            clears. Prevents rapid on/off cycling.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 300
+              step: 5
+              unit_of_measurement: "seconds"
 
     # -------------------------------------------------------------------------
     # Persistent State Configuration
@@ -202,12 +255,12 @@ blueprint:
           description: >
             Light will only turn on if luminance sensor value is below
             this threshold (darker than this level).
-          default: 100
+          default: 50
           selector:
             number:
               min: 0
               max: 10000
-              step: 1
+              step: 5
               unit_of_measurement: "lux"
 
         luminance_enable_switch:
@@ -221,6 +274,175 @@ blueprint:
               domain:
                 - switch
                 - input_boolean
+
+    # -------------------------------------------------------------------------
+    # Time-Based Control
+    # -------------------------------------------------------------------------
+    time_based_control:
+      name: "Time-Based Control"
+      collapsed: true
+      input:
+        enable_time_condition:
+          name: Enable Time Condition
+          description: Only allow automation during specified time window
+          default: false
+          selector:
+            boolean:
+
+        time_after:
+          name: Active After
+          description: Automation only active after this time
+          default: "00:00:00"
+          selector:
+            time:
+
+        time_before:
+          name: Active Before
+          description: Automation only active before this time
+          default: "23:59:59"
+          selector:
+            time:
+
+    # -------------------------------------------------------------------------
+    # Day/Night Settings
+    # -------------------------------------------------------------------------
+    day_night_settings:
+      name: "Day/Night Settings"
+      collapsed: true
+      input:
+        enable_day_night_mode:
+          name: Enable Day/Night Mode
+          description: Use different light settings based on time of day
+          default: false
+          selector:
+            boolean:
+
+        night_mode_after:
+          name: Night Mode After
+          description: Switch to night settings after this time
+          default: "22:00:00"
+          selector:
+            time:
+
+        night_mode_before:
+          name: Night Mode Before
+          description: Switch to day settings after this time
+          default: "06:00:00"
+          selector:
+            time:
+
+        day_light_data:
+          name: Day Light Settings
+          description: Light parameters during day mode (YAML dictionary)
+          default: ""
+          selector:
+            object: {}
+
+        night_light_data:
+          name: Night Light Settings
+          description: Light parameters during night mode (YAML dictionary)
+          default: ""
+          selector:
+            object: {}
+
+    # -------------------------------------------------------------------------
+    # Scene Support
+    # -------------------------------------------------------------------------
+    scene_support:
+      name: "Scene Support"
+      collapsed: true
+      input:
+        use_scene_instead:
+          name: Use Scene Instead of Light Data
+          description: Activate a scene instead of setting light parameters
+          default: false
+          selector:
+            boolean:
+
+        scene_entity:
+          name: Scene Entity
+          description: Scene to activate when motion detected
+          default: null
+          selector:
+            entity:
+              domain: scene
+
+        night_scene_entity:
+          name: Night Scene Entity (optional)
+          description: Scene to activate during night mode (if day/night enabled)
+          default: null
+          selector:
+            entity:
+              domain: scene
+
+    # -------------------------------------------------------------------------
+    # Dim Before Off
+    # -------------------------------------------------------------------------
+    dim_before_off:
+      name: "Dim Before Off"
+      collapsed: true
+      input:
+        enable_dim_before_off:
+          name: Enable Dim Before Off
+          description: Gradually dim light before turning off completely
+          default: false
+          selector:
+            boolean:
+
+        dim_brightness:
+          name: Dim Brightness Level
+          description: Brightness to dim to before turning off (1-255)
+          default: 25
+          selector:
+            number:
+              min: 1
+              max: 255
+              step: 5
+
+        dim_duration:
+          name: Dim Duration (seconds)
+          description: How long to stay dimmed before turning off
+          default: 5
+          selector:
+            number:
+              min: 1
+              max: 60
+              step: 1
+              unit_of_measurement: "seconds"
+
+    # -------------------------------------------------------------------------
+    # Motion Sensor Settings
+    # -------------------------------------------------------------------------
+    motion_settings:
+      name: "Motion Sensor Settings"
+      collapsed: true
+      input:
+        motion_debounce:
+          name: Motion Debounce (seconds)
+          description: >
+            Motion must be sustained for this duration before triggering.
+            Helps filter out brief false triggers. Set to 0 to disable.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 1
+              unit_of_measurement: "seconds"
+
+    # -------------------------------------------------------------------------
+    # Debug
+    # -------------------------------------------------------------------------
+    debug:
+      name: "Debug"
+      collapsed: true
+      input:
+        enable_debug_notifications:
+          name: Enable Debug Notifications
+          description: Send persistent notifications for debugging automation behavior
+          default: false
+          selector:
+            boolean:
 
     # -------------------------------------------------------------------------
     # Callback Actions
@@ -278,10 +500,19 @@ mode: restart
 # TRIGGERS
 # =============================================================================
 trigger:
-  # Motion sensors ON/OFF
+  # Motion sensors ON (with debounce)
   - platform: state
     entity_id: !input motion_sensors
-    id: "motion_sensor"
+    to: "on"
+    for:
+      seconds: !input motion_debounce
+    id: "motion_sensor_on"
+
+  # Motion sensors OFF
+  - platform: state
+    entity_id: !input motion_sensors
+    to: "off"
+    id: "motion_sensor_off"
 
   # Condition switches ON/OFF
   - platform: state
@@ -289,12 +520,12 @@ trigger:
 
   # Light state changed (for manual override detection)
   - platform: state
-    entity_id: !input target_light
+    entity_id: !input target_lights
     id: "light_state_changed"
 
   # Switch state changed (for manual override detection)
   - platform: state
-    entity_id: !input target_switch
+    entity_id: !input target_switches
     id: "switch_state_changed"
 
   # Luminance sensor value changed
@@ -358,15 +589,65 @@ variables:
   sensors: !input motion_sensors
   condition_switches: !input condition_switches
   timeout: !input timeout_delay
+  min_on_duration: !input min_on_duration
   brightness_threshold: !input brightness_threshold
+  transition_duration: !input transition_duration
 
-  # Light configuration
-  light_entities: !input target_light
-  light_entity: "{{ light_entities[0] if light_entities | length != 0 else none }}"
+  # ---------------------------------------------------------------------------
+  # Target Device Resolution
+  # ---------------------------------------------------------------------------
+  target_lights: !input target_lights
+  target_switches: !input target_switches
+  target_light_group: !input target_light_group
+  target_area: !input target_area
 
-  # Switch configuration
-  switch_entities: !input target_switch
-  switch_entity: "{{ switch_entities[0] if switch_entities | length != 0 else none }}"
+  # Resolve all lights from direct selection, groups, and areas
+  resolved_all_lights: >-
+    {% set result = [] %}
+    {% if target_lights | length > 0 %}
+      {% set result = result + target_lights %}
+    {% endif %}
+    {% if target_light_group is not none %}
+      {% set result = result + [target_light_group] %}
+    {% endif %}
+    {% if target_area != '' %}
+      {% set area_lights = area_entities(target_area) | select('match', '^light\\.') | list %}
+      {% set result = result + area_lights %}
+    {% endif %}
+    {% set seen = namespace(items=[]) %}
+    {% for item in result %}
+      {% if item not in seen.items %}
+        {% set seen.items = seen.items + [item] %}
+      {% endif %}
+    {% endfor %}
+    {{ seen.items }}
+
+  # Resolve all switches from direct selection and areas
+  resolved_all_switches: >-
+    {% set result = [] %}
+    {% if target_switches | length > 0 %}
+      {% set result = result + target_switches %}
+    {% endif %}
+    {% if target_area != '' %}
+      {% set area_switches = area_entities(target_area) | select('match', '^switch\\.') | list %}
+      {% set result = result + area_switches %}
+    {% endif %}
+    {{ result | unique | list }}
+
+  # Reference light for state checks (first available)
+  reference_light: "{{ resolved_all_lights[0] if resolved_all_lights | length > 0 else none }}"
+
+  # Check if any device is on
+  any_device_on: >
+    {% set lights_on = resolved_all_lights | select('is_state', 'on') | list | length > 0 %}
+    {% set switches_on = resolved_all_switches | select('is_state', 'on') | list | length > 0 %}
+    {{ lights_on or switches_on }}
+
+  all_devices_off: "{{ not any_device_on }}"
+
+  # Legacy compatibility aliases
+  light_entity: "{{ reference_light }}"
+  switch_entity: "{{ resolved_all_switches[0] if resolved_all_switches | length > 0 else none }}"
 
   # ---------------------------------------------------------------------------
   # Persistent State Management
@@ -447,6 +728,88 @@ variables:
     {% endif %}
 
   # ---------------------------------------------------------------------------
+  # Time-Based Control
+  # ---------------------------------------------------------------------------
+  enable_time_condition: !input enable_time_condition
+  time_after: !input time_after
+  time_before: !input time_before
+
+  time_condition_ok: >
+    {% if not enable_time_condition %}
+      {{ true }}
+    {% else %}
+      {% set now_time = now().strftime('%H:%M:%S') %}
+      {% set after = time_after | string %}
+      {% set before = time_before | string %}
+      {% if after <= before %}
+        {{ after <= now_time <= before }}
+      {% else %}
+        {# Spans midnight (e.g., 22:00 to 06:00) #}
+        {{ now_time >= after or now_time <= before }}
+      {% endif %}
+    {% endif %}
+
+  # ---------------------------------------------------------------------------
+  # Day/Night Mode
+  # ---------------------------------------------------------------------------
+  enable_day_night_mode: !input enable_day_night_mode
+  night_mode_after: !input night_mode_after
+  night_mode_before: !input night_mode_before
+  day_light_data: !input day_light_data
+  night_light_data: !input night_light_data
+
+  is_night_mode: >
+    {% if not enable_day_night_mode %}
+      {{ false }}
+    {% else %}
+      {% set now_time = now().strftime('%H:%M:%S') %}
+      {% set after = night_mode_after | string %}
+      {% set before = night_mode_before | string %}
+      {% if after <= before %}
+        {{ after <= now_time <= before }}
+      {% else %}
+        {{ now_time >= after or now_time <= before }}
+      {% endif %}
+    {% endif %}
+
+  effective_light_data: >
+    {% if enable_day_night_mode %}
+      {{ night_light_data if is_night_mode else day_light_data }}
+    {% else %}
+      {{ light_data }}
+    {% endif %}
+
+  # ---------------------------------------------------------------------------
+  # Scene Support
+  # ---------------------------------------------------------------------------
+  use_scene_instead: !input use_scene_instead
+  scene_entity: !input scene_entity
+  night_scene_entity: !input night_scene_entity
+
+  effective_scene: >
+    {% if use_scene_instead %}
+      {% if enable_day_night_mode and is_night_mode and night_scene_entity is not none %}
+        {{ night_scene_entity }}
+      {% else %}
+        {{ scene_entity }}
+      {% endif %}
+    {% else %}
+      {{ none }}
+    {% endif %}
+
+  # ---------------------------------------------------------------------------
+  # Dim Before Off
+  # ---------------------------------------------------------------------------
+  enable_dim_before_off: !input enable_dim_before_off
+  dim_brightness: !input dim_brightness
+  dim_duration: !input dim_duration
+
+  # ---------------------------------------------------------------------------
+  # Debug
+  # ---------------------------------------------------------------------------
+  enable_debug_notifications: !input enable_debug_notifications
+
+  # ---------------------------------------------------------------------------
   # Trigger Evaluation
   # ---------------------------------------------------------------------------
   # Check if ALL condition switches are ON (AND logic)
@@ -472,7 +835,7 @@ variables:
   # ---------------------------------------------------------------------------
   # Should we enable the light? (All conditions must be met)
   must_be_enabled_preview: >
-    {{ (all_of_condition_switches_on and luminance_ok and motion_on) | bool }}
+    {{ (all_of_condition_switches_on and luminance_ok and motion_on and time_condition_ok) | bool }}
   must_be_enabled_guard: "{{ state_is_none }}"
   must_be_enabled: >
     {{ must_be_enabled_preview and must_be_enabled_guard }}
@@ -506,25 +869,6 @@ action:
                 must_be_disabled: {{ must_be_disabled }},
                 must_be_disabled_guard: {{ must_be_disabled_guard }},
                 trigger_id: {{ trigger.id }}
-
-  # ---------------------------------------------------------------------------
-  # GUARDS: Validate prerequisites
-  # ---------------------------------------------------------------------------
-  # Guard: Only one light supported
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ light_entities | length > 1 }}"
-        sequence:
-          - stop: "Only one light is supported currently"
-
-  # Guard: Only one switch supported
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ switch_entities | length > 1 }}"
-        sequence:
-          - stop: "Only one switch is supported currently"
 
   # ===========================================================================
   # MAIN STATE MACHINE
@@ -609,6 +953,20 @@ action:
                       - conditions: "{{ manual_action != [] }}"
                         sequence: !input manual_action
 
+                  # Debug notification
+                  - choose:
+                      - conditions: "{{ enable_debug_notifications }}"
+                        sequence:
+                          - service: persistent_notification.create
+                            data:
+                              title: "Motion Light Debug"
+                              message: >
+                                Action: MANUAL OVERRIDE
+                                Time: {{ now().strftime('%H:%M:%S') }}
+                                Previous State: ENABLED
+                                New State: MANUAL
+                                Trigger: {{ trigger_id }}
+
       # -----------------------------------------------------------------------
       # CASE 2: Enable Path (Motion Detected, Should Turn On)
       # -----------------------------------------------------------------------
@@ -617,67 +975,64 @@ action:
             value_template: "{{ must_be_enabled }}"
         sequence:
           - choose:
-              # Guard: Stop if light is already ON
-              # (Don't hijack user-controlled light)
+              # Guard: Stop if any device is already ON
+              # (Don't hijack user-controlled lights)
               - conditions:
                   - condition: template
-                    value_template: >
-                      {% set res = false %}
-                      {% if light_entity is not none %}
-                        {# BUG FIX: Added proper null check for brightness #}
-                        {% set brightness = state_attr(light_entity, 'brightness') | int(0) %}
-                        {% set res = res or (is_state(light_entity, 'on') and brightness > brightness_threshold) %}
-                      {% endif %}
-                      {% if switch_entity is not none %}
-                        {% set res = res or is_state(switch_entity, 'on') %}
-                      {% endif %}
-                      {{ res }}
+                    value_template: "{{ any_device_on }}"
                 sequence:
                   - stop: "Light is already ON when sensors were triggered"
 
             # Enable the light/switch
             default:
-              # Debug info
-              - choose:
-                  - conditions:
-                      - condition: template
-                        value_template: "{{ is_debug }}"
-                    sequence:
-                      - service: persistent_notification.create
-                        data:
-                          title: "Debug Info (Enable Path)"
-                          message: >
-                            Enabling light. light_entity: {{ light_entity }}
-
               # Store current brightness (to restore later if configured)
               - variables:
                   last_brightness: >
-                    {% if light_entity is none or is_state(light_entity, 'off') %}
+                    {% if reference_light is none or is_state(reference_light, 'off') %}
                       {{ 0 }}
                     {% else %}
-                      {{ state_attr(light_entity, 'brightness') | int(0) }}
+                      {{ state_attr(reference_light, 'brightness') | int(0) }}
                     {% endif %}
 
-              # Turn ON the light
+              # Scene activation path
               - choose:
                   - conditions:
                       - condition: template
-                        value_template: "{{ light_entity is not none }}"
+                        value_template: "{{ use_scene_instead and effective_scene is not none }}"
                     sequence:
-                      - service: light.turn_on
+                      - service: scene.turn_on
                         target:
-                          entity_id: "{{ light_entity }}"
-                        data: "{{ light_data if light_data else {} }}"
+                          entity_id: "{{ effective_scene }}"
+                        data:
+                          transition: "{{ transition_duration }}"
 
-              # Turn ON the switch
-              - choose:
-                  - conditions:
-                      - condition: template
-                        value_template: "{{ switch_entity is not none }}"
-                    sequence:
-                      - service: switch.turn_on
-                        target:
-                          entity_id: "{{ switch_entity }}"
+                # Default: Turn ON lights/switches
+                default:
+                  # Turn ON the lights
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ resolved_all_lights | length > 0 }}"
+                        sequence:
+                          - service: light.turn_on
+                            target:
+                              entity_id: "{{ resolved_all_lights }}"
+                            data: >
+                              {% set d = effective_light_data if effective_light_data else {} %}
+                              {% if transition_duration > 0 %}
+                                {% set d = d | combine({'transition': transition_duration}) %}
+                              {% endif %}
+                              {{ d }}
+
+                  # Turn ON the switches
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ resolved_all_switches | length > 0 }}"
+                        sequence:
+                          - service: switch.turn_on
+                            target:
+                              entity_id: "{{ resolved_all_switches }}"
 
               # Update state to ENABLING (waiting for light state change confirmation)
               - service: input_text.set_value
@@ -699,6 +1054,21 @@ action:
                         value_template: "{{ enable_action != [] }}"
                     sequence: !input enable_action
 
+              # Debug notification
+              - choose:
+                  - conditions: "{{ enable_debug_notifications }}"
+                    sequence:
+                      - service: persistent_notification.create
+                        data:
+                          title: "Motion Light Debug"
+                          message: >
+                            Action: ENABLE
+                            Time: {{ now().strftime('%H:%M:%S') }}
+                            Lights: {{ resolved_all_lights }}
+                            Switches: {{ resolved_all_switches }}
+                            Scene: {{ effective_scene if use_scene_instead else 'N/A' }}
+                            Night Mode: {{ is_night_mode }}
+
       # -----------------------------------------------------------------------
       # CASE 3: Disable Path (Motion Cleared, Should Turn Off)
       # -----------------------------------------------------------------------
@@ -706,27 +1076,55 @@ action:
           - condition: template
             value_template: "{{ must_be_disabled }}"
         sequence:
-          # Debug info
+          # Calculate minimum on duration remaining
+          - variables:
+              time_since_enabled: >
+                {% set last_ts = automation_state.get(state_motion_light_last_action_timestamp, none) %}
+                {% if last_ts is none %}
+                  {{ 9999 }}
+                {% else %}
+                  {% set parsed = last_ts | as_datetime %}
+                  {% if parsed is none %}
+                    {{ 9999 }}
+                  {% else %}
+                    {{ (now() - parsed).total_seconds() | int }}
+                  {% endif %}
+                {% endif %}
+              remaining_min_on: "{{ [0, min_on_duration - time_since_enabled] | max }}"
+
+          # Wait remaining minimum on duration if needed
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ is_debug }}"
+                    value_template: "{{ remaining_min_on > 0 }}"
                 sequence:
-                  - service: persistent_notification.create
-                    data:
-                      title: "Debug Info (Disable Path)"
-                      message: >
-                        Disabling light. light_entity: {{ light_entity }}
+                  - delay:
+                      seconds: "{{ remaining_min_on }}"
 
           # Wait for timeout before turning off
           - delay:
               seconds: "{{ timeout }}"
 
-          # Turn OFF or restore the light
+          # Dim before off (if enabled)
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ light_entity is not none }}"
+                    value_template: "{{ enable_dim_before_off and resolved_all_lights | length > 0 }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: "{{ resolved_all_lights }}"
+                    data:
+                      brightness: "{{ dim_brightness }}"
+                      transition: "{{ transition_duration }}"
+                  - delay:
+                      seconds: "{{ dim_duration }}"
+
+          # Turn OFF or restore the lights
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ resolved_all_lights | length > 0 }}"
                 sequence:
                   - variables:
                       last_brightness: "{{ automation_state.get(state_motion_light_last_brightness, 0) | int }}"
@@ -739,25 +1137,28 @@ action:
                         sequence:
                           - service: light.turn_on
                             target:
-                              entity_id: "{{ light_entity }}"
+                              entity_id: "{{ resolved_all_lights }}"
                             data:
                               brightness: "{{ last_brightness }}"
+                              transition: "{{ transition_duration }}"
 
                     # Otherwise turn off completely
                     default:
                       - service: light.turn_off
                         target:
-                          entity_id: "{{ light_entity }}"
+                          entity_id: "{{ resolved_all_lights }}"
+                        data:
+                          transition: "{{ transition_duration }}"
 
-          # Turn OFF the switch
+          # Turn OFF the switches
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ switch_entity is not none }}"
+                    value_template: "{{ resolved_all_switches | length > 0 }}"
                 sequence:
                   - service: switch.turn_off
                     target:
-                      entity_id: "{{ switch_entity }}"
+                      entity_id: "{{ resolved_all_switches }}"
 
           # Update state to NONE (ready for next motion event)
           - service: input_text.set_value
@@ -774,3 +1175,17 @@ action:
                   - condition: template
                     value_template: "{{ disable_action != [] }}"
                 sequence: !input disable_action
+
+          # Debug notification
+          - choose:
+              - conditions: "{{ enable_debug_notifications }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Motion Light Debug"
+                      message: >
+                        Action: DISABLE
+                        Time: {{ now().strftime('%H:%M:%S') }}
+                        Timeout: {{ timeout }}s
+                        Min On Duration: {{ min_on_duration }}s
+                        Dim Before Off: {{ enable_dim_before_off }}

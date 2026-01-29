@@ -25,14 +25,15 @@
 #   - `people`:         List of all people detected in the album
 #
 # Added Assets Fields (each item in `added_assets`):
-#   - `id`:             Unique asset ID
-#   - `asset_type`:     Type of asset (IMAGE or VIDEO)
-#   - `asset_filename`: Original filename of the asset
-#   - `asset_created`:  Date/time when the asset was originally created
-#   - `asset_owner`:    Display name of the user who owns the asset
-#   - `asset_owner_id`: Unique ID of the user who owns the asset
-#   - `asset_url`:      Public URL to view the asset (only if album has shared link)
-#   - `people`:         List of people detected in this specific asset
+#   - `id`:                Unique asset ID
+#   - `asset_type`:        Type of asset (IMAGE or VIDEO)
+#   - `asset_filename`:    Original filename of the asset
+#   - `asset_description`: User-provided description of the asset
+#   - `asset_created`:     Date/time when the asset was originally created
+#   - `asset_owner`:       Display name of the user who owns the asset
+#   - `asset_owner_id`:    Unique ID of the user who owns the asset
+#   - `asset_url`:         Public URL to view the asset (only if album has shared link)
+#   - `people`:            List of people detected in this specific asset
 #
 # Message Template Variables:
 #   All message templates support these placeholder variables (use single braces):
@@ -46,6 +47,7 @@
 # Asset Item Template Variables:
 #   These variables can be used in the asset item template:
 #   - `{filename}`      - Original filename of the asset
+#   - `{description}`   - User-provided description of the asset
 #   - `{type}`          - Asset type (IMAGE or VIDEO)
 #   - `{created}`       - Creation date/time
 #   - `{owner}`         - Owner display name
@@ -182,7 +184,7 @@ blueprint:
           name: "Asset Item Template"
           description: >
             Template for each asset in the list.
-            Variables: `{filename}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`
           default: "\n  • {filename} ({type})"
           selector:
             text:
@@ -311,6 +313,7 @@ variables:
       {% for asset in assets_to_show %}
         {% set item = message_asset_item_template
           | replace('{filename}', asset.asset_filename | default('Unknown'))
+          | replace('{description}', asset.asset_description | default(''))
           | replace('{type}', asset.asset_type | default('Unknown'))
           | replace('{created}', asset.asset_created | default('Unknown'))
           | replace('{owner}', asset.asset_owner | default('Unknown'))

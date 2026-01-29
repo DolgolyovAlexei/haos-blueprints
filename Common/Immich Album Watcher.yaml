@@ -6,6 +6,7 @@
 # Designed to be used in pair with `Immich Album Watcher` integration.
 #
 # Features:
+#   - Filter by hub/instance name (for multi-hub setups)
 #   - Monitor specific albums by name (whitelist)
 #   - Filter by asset type (track images only, videos only, or both)
 #   - Send notifications to multiple targets simultaneously
@@ -16,6 +17,7 @@
 #   - Support for multiple change types (assets added, removed, changed)
 #
 # Event Data from Immich:
+#   - `hub_name`:       Name of the Immich hub/instance that sent the event
 #   - `album_id`:       Album ID
 #   - `album_name`:     Album name
 #   - `album_url`:      Public URL to view the album (only if album has shared link)
@@ -72,12 +74,23 @@ blueprint:
   input:
 
     # -------------------------------------------------------------------------
-    # Album Configuration
+    # Hub & Album Configuration
     # -------------------------------------------------------------------------
     albums_group:
-      name: "Albums"
+      name: "Hub & Albums"
       collapsed: false
       input:
+        hub_names:
+          name: Hub Names to Track
+          description: >
+            List of Immich hub/instance names to monitor.
+            Only events from matching hubs will trigger notifications.
+            Leave empty to track all hubs.
+          default: []
+          selector:
+            text:
+              multiple: true
+
         album_names:
           name: Album Names to Track
           description: >
@@ -283,6 +296,7 @@ variables:
   # ---------------------------------------------------------------------------
   # Input Variables
   # ---------------------------------------------------------------------------
+  hub_names: !input hub_names
   album_names: !input album_names
   notify_targets: !input notify_targets
   include_people: !input include_people
@@ -308,6 +322,7 @@ variables:
   # ---------------------------------------------------------------------------
   # Event Data
   # ---------------------------------------------------------------------------
+  event_hub_name: "{{ trigger.event.data.hub_name | default('') }}"
   event_album_name: "{{ trigger.event.data.album_name | default('Unknown Album') }}"
   event_album_id: "{{ trigger.event.data.album_id | default('') }}"
   event_album_url: "{{ trigger.event.data.album_url | default('') }}"
@@ -320,6 +335,10 @@ variables:
   # ---------------------------------------------------------------------------
   # Computed Values
   # ---------------------------------------------------------------------------
+  # Check if this hub should be tracked (empty list = track all)
+  is_hub_tracked: >
+    {{ hub_names | length == 0 or event_hub_name in hub_names }}
+
   # Check if this album should be tracked (empty list = track all)
   is_album_tracked: >
     {{ album_names | length == 0 or event_album_name in album_names }}
@@ -396,6 +415,10 @@ variables:
 # CONDITIONS
 # =============================================================================
 condition:
+  # Only proceed if the hub is in our tracking list
+  - condition: template
+    value_template: "{{ is_hub_tracked }}"
+
   # Only proceed if the album is in our tracking list
   - condition: template
     value_template: "{{ is_album_tracked }}"
@@ -422,6 +445,7 @@ action:
               title: "Immich Album Watcher Debug"
               message: >
                 Trigger ID: {{ trigger.id }}
+                Hub: {{ event_hub_name }}
                 Album: {{ event_album_name }}
                 Album ID: {{ event_album_id }}
                 Album URL: {{ event_album_url }}
@@ -431,7 +455,8 @@ action:
                 Removed Count: {{ event_removed_count }}
                 Added Assets: {{ event_added_assets | length }}
                 People: {{ event_people | join(', ') }}
-                Is Tracked: {{ is_album_tracked }}
+                Is Hub Tracked: {{ is_hub_tracked }}
+                Is Album Tracked: {{ is_album_tracked }}
                 Should Notify: {{ should_notify }}
                 Track Images: {{ track_images }}
                 Track Videos: {{ track_videos }}

@@ -1,0 +1,475 @@
+# =============================================================================
+# Immich Album Watcher Blueprint for Home Assistant
+# =============================================================================
+# This blueprint monitors Immich album changes and sends notifications when
+# assets (photos/videos) are added to specified albums.
+# Designed to be used in pair with `Immich Album Watcher` integration.
+#
+# Features:
+#   - Monitor specific albums by name (whitelist)
+#   - Send notifications to multiple targets simultaneously
+#   - Customizable notification messages with template variables
+#   - Optional: include people detected in photos
+#   - Optional: include detailed asset list with per-item formatting
+#   - Support for multiple change types (assets added, removed, changed)
+#
+# Event Data from Immich:
+#   - `album_id`:       Album ID
+#   - `album_name`:     Album name
+#   - `album_url`:      Public URL to view the album (only if album has shared link)
+#   - `change_type`:    Type of change (assets_added, assets_removed, changed)
+#   - `added_count`:    Number of assets added
+#   - `removed_count`:  Number of assets removed
+#   - `added_assets`:   List of added assets (see Added Assets Fields below)
+#   - `removed_assets`: List of removed asset IDs
+#   - `people`:         List of all people detected in the album
+#
+# Added Assets Fields (each item in `added_assets`):
+#   - `id`:             Unique asset ID
+#   - `asset_type`:     Type of asset (IMAGE or VIDEO)
+#   - `asset_filename`: Original filename of the asset
+#   - `asset_created`:  Date/time when the asset was originally created
+#   - `asset_owner`:    Display name of the user who owns the asset
+#   - `asset_owner_id`: Unique ID of the user who owns the asset
+#   - `asset_url`:      Public URL to view the asset (only if album has shared link)
+#   - `people`:         List of people detected in this specific asset
+#
+# Message Template Variables:
+#   All message templates support these placeholder variables (use single braces):
+#   - `{album_name}`    - Name of the album
+#   - `{album_url}`     - Public URL to view the album (empty if no shared link)
+#   - `{added_count}`   - Number of assets added
+#   - `{removed_count}` - Number of assets removed
+#   - `{people}`        - Comma-separated list of people detected
+#   - `{assets}`        - Formatted list of added assets (using asset item template)
+#
+# Asset Item Template Variables:
+#   These variables can be used in the asset item template:
+#   - `{filename}`      - Original filename of the asset
+#   - `{type}`          - Asset type (IMAGE or VIDEO)
+#   - `{created}`       - Creation date/time
+#   - `{owner}`         - Owner display name
+#   - `{url}`           - Public URL to view the asset (empty if no shared link)
+#   - `{people}`        - People detected in this asset
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
+# =============================================================================
+
+blueprint:
+  name: "Custom: Immich Album Watcher"
+  description: >
+    Sends notifications to multiple targets when photos/videos are added to
+    specified Immich albums. Monitors Immich album watcher events and filters by album name.
+  domain: automation
+
+  # ===========================================================================
+  # INPUT CONFIGURATION
+  # ===========================================================================
+  input:
+
+    # -------------------------------------------------------------------------
+    # Album Configuration
+    # -------------------------------------------------------------------------
+    albums_group:
+      name: "Albums"
+      collapsed: false
+      input:
+        album_names:
+          name: Album Names to Track
+          description: >
+            List of album names to monitor for changes.
+            Only albums matching these names will trigger notifications.
+            Leave empty to track all albums.
+          default: []
+          selector:
+            text:
+              multiple: true
+
+        track_assets_added:
+          name: Track Assets Added
+          description: "Send notifications when assets are added to albums"
+          default: true
+          selector:
+            boolean:
+
+        track_assets_removed:
+          name: Track Assets Removed
+          description: "Send notifications when assets are removed from albums"
+          default: false
+          selector:
+            boolean:
+
+    # -------------------------------------------------------------------------
+    # Notification Configuration
+    # -------------------------------------------------------------------------
+    notification_group:
+      name: "Notification"
+      collapsed: false
+      input:
+        notify_targets:
+          name: Notification Targets
+          description: "Notification service entities to send messages to (select one or more)"
+          selector:
+            entity:
+              domain: notify
+              multiple: true
+
+        include_people:
+          name: Include People in Notification
+          description: "Include list of detected people in the notification message"
+          default: true
+          selector:
+            boolean:
+
+        include_asset_details:
+          name: Include Asset Details
+          description: "Include formatted list of added assets in the notification"
+          default: false
+          selector:
+            boolean:
+
+        max_assets_to_show:
+          name: Maximum Assets to Show
+          description: >
+            Maximum number of assets to include in the notification.
+            Set to 0 for unlimited. Useful to prevent very long notifications.
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 50
+              mode: slider
+
+    # -------------------------------------------------------------------------
+    # Message Templates
+    # -------------------------------------------------------------------------
+    messages_group:
+      name: "Messages"
+      collapsed: true
+      input:
+        message_assets_added:
+          name: "Assets Added Message"
+          description: >
+            Message sent when assets are added to an album.
+            Variables: `{album_name}`, `{album_url}`, `{added_count}`, `{people}`, `{assets}`
+          default: "📷 {added_count} new photo(s) added to album \"{album_name}\".{people}{assets}"
+          selector:
+            text:
+              multiline: true
+
+        message_assets_removed:
+          name: "Assets Removed Message"
+          description: >
+            Message sent when assets are removed from an album.
+            Variables: `{album_name}`, `{album_url}`, `{removed_count}`
+          default: "🗑️ {removed_count} photo(s) removed from album \"{album_name}\"."
+          selector:
+            text:
+              multiline: true
+
+        message_people_format:
+          name: "People Format"
+          description: >
+            Format for the people list in notifications.
+            Use `{people}` as the placeholder for the comma-separated list.
+            Leave empty to just show people names without prefix.
+          default: " People: {people}."
+          selector:
+            text:
+              multiline: true
+
+        message_asset_item:
+          name: "Asset Item Template"
+          description: >
+            Template for each asset in the list.
+            Variables: `{filename}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`
+          default: "\n  • {filename} ({type})"
+          selector:
+            text:
+              multiline: true
+
+        message_assets_format:
+          name: "Assets List Format"
+          description: >
+            Format wrapper for the assets list.
+            Use `{assets}` as placeholder for the formatted asset items.
+            Use `{more_count}` for number of additional assets not shown.
+          default: "\nAssets:{assets}"
+          selector:
+            text:
+              multiline: true
+
+        message_assets_more:
+          name: "More Assets Message"
+          description: >
+            Message appended when there are more assets than the maximum shown.
+            Use `{more_count}` for the number of additional assets.
+          default: "\n  • ...and {more_count} more"
+          selector:
+            text:
+              multiline: true
+
+    # -------------------------------------------------------------------------
+    # Debug
+    # -------------------------------------------------------------------------
+    debug:
+      name: "Debug"
+      collapsed: true
+      input:
+        enable_debug_notifications:
+          name: Enable Debug Notifications
+          description: >
+            Send persistent notifications for debugging automation behavior.
+            Shows event data and filtering decisions.
+          default: false
+          selector:
+            boolean:
+
+# =============================================================================
+# AUTOMATION MODE
+# =============================================================================
+# Single mode to process one event at a time
+mode: single
+
+# =============================================================================
+# TRIGGERS
+# =============================================================================
+trigger:
+  # Monitor Immich album watcher events
+  - platform: event
+    event_type: immich_album_watcher_assets_added
+    id: "assets_added"
+
+  - platform: event
+    event_type: immich_album_watcher_assets_removed
+    id: "assets_removed"
+
+  - platform: event
+    event_type: immich_album_watcher_changed
+    id: "changed"
+
+# =============================================================================
+# VARIABLES
+# =============================================================================
+variables:
+  # ---------------------------------------------------------------------------
+  # Input Variables
+  # ---------------------------------------------------------------------------
+  album_names: !input album_names
+  notify_targets: !input notify_targets
+  include_people: !input include_people
+  include_asset_details: !input include_asset_details
+  max_assets_to_show: !input max_assets_to_show
+  track_assets_added: !input track_assets_added
+  track_assets_removed: !input track_assets_removed
+  enable_debug_notifications: !input enable_debug_notifications
+
+  # ---------------------------------------------------------------------------
+  # Message Templates
+  # ---------------------------------------------------------------------------
+  message_assets_added_template: !input message_assets_added
+  message_assets_removed_template: !input message_assets_removed
+  message_people_format_template: !input message_people_format
+  message_asset_item_template: !input message_asset_item
+  message_assets_format_template: !input message_assets_format
+  message_assets_more_template: !input message_assets_more
+
+  # ---------------------------------------------------------------------------
+  # Event Data
+  # ---------------------------------------------------------------------------
+  event_album_name: "{{ trigger.event.data.album_name | default('Unknown Album') }}"
+  event_album_id: "{{ trigger.event.data.album_id | default('') }}"
+  event_album_url: "{{ trigger.event.data.album_url | default('') }}"
+  event_change_type: "{{ trigger.event.data.change_type | default(trigger.id) }}"
+  event_added_count: "{{ trigger.event.data.added_count | default(0) | int }}"
+  event_removed_count: "{{ trigger.event.data.removed_count | default(0) | int }}"
+  event_people: "{{ trigger.event.data.people | default([]) }}"
+  event_added_assets: "{{ trigger.event.data.added_assets | default([]) }}"
+
+  # ---------------------------------------------------------------------------
+  # Computed Values
+  # ---------------------------------------------------------------------------
+  # Check if this album should be tracked (empty list = track all)
+  is_album_tracked: >
+    {{ album_names | length == 0 or event_album_name in album_names }}
+
+  # Format people list for notification
+  people_list: >
+    {% if include_people and event_people | length > 0 %}
+      {% set people_str = event_people | join(', ') %}
+      {{ message_people_format_template | replace('{people}', people_str) }}
+    {% else %}
+      {{ '' }}
+    {% endif %}
+
+  # Format assets list for notification
+  assets_list: >
+    {% if include_asset_details and event_added_assets | length > 0 %}
+      {% set ns = namespace(items = '') %}
+      {% set max_items = max_assets_to_show if max_assets_to_show > 0 else event_added_assets | length %}
+      {% set assets_to_show = event_added_assets[:max_items] %}
+      {% for asset in assets_to_show %}
+        {% set item = message_asset_item_template
+          | replace('{filename}', asset.asset_filename | default('Unknown'))
+          | replace('{type}', asset.asset_type | default('Unknown'))
+          | replace('{created}', asset.asset_created | default('Unknown'))
+          | replace('{owner}', asset.asset_owner | default('Unknown'))
+          | replace('{url}', asset.asset_url | default(''))
+          | replace('{people}', (asset.people | default([])) | join(', ')) %}
+        {% set ns.items = ns.items ~ item %}
+      {% endfor %}
+      {% set more_count = event_added_assets | length - max_items %}
+      {% if more_count > 0 %}
+        {% set ns.items = ns.items ~ message_assets_more_template | replace('{more_count}', more_count | string) %}
+      {% endif %}
+      {{ message_assets_format_template | replace('{assets}', ns.items) }}
+    {% else %}
+      {{ '' }}
+    {% endif %}
+
+  # Determine if this event type should trigger a notification
+  should_notify: >
+    {% if trigger.id == 'assets_added' and track_assets_added and event_added_count > 0 %}
+      {{ true }}
+    {% elif trigger.id == 'assets_removed' and track_assets_removed and event_removed_count > 0 %}
+      {{ true }}
+    {% elif trigger.id == 'changed' and (track_assets_added or track_assets_removed) %}
+      {{ true }}
+    {% else %}
+      {{ false }}
+    {% endif %}
+
+# =============================================================================
+# CONDITIONS
+# =============================================================================
+condition:
+  # Only proceed if the album is in our tracking list
+  - condition: template
+    value_template: "{{ is_album_tracked }}"
+
+  # Only proceed if we should notify for this event type
+  - condition: template
+    value_template: "{{ should_notify }}"
+
+# =============================================================================
+# ACTIONS
+# =============================================================================
+action:
+
+  # ---------------------------------------------------------------------------
+  # DEBUG: Log event data (enabled via Debug input section)
+  # ---------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ enable_debug_notifications }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Immich Album Watcher Debug"
+              message: >
+                Trigger ID: {{ trigger.id }}
+                Album: {{ event_album_name }}
+                Album ID: {{ event_album_id }}
+                Album URL: {{ event_album_url }}
+                Change Type: {{ event_change_type }}
+                Added Count: {{ event_added_count }}
+                Removed Count: {{ event_removed_count }}
+                Added Assets: {{ event_added_assets | length }}
+                People: {{ event_people | join(', ') }}
+                Is Tracked: {{ is_album_tracked }}
+                Should Notify: {{ should_notify }}
+                Include Asset Details: {{ include_asset_details }}
+
+  # ---------------------------------------------------------------------------
+  # Send Notification Based on Event Type
+  # ---------------------------------------------------------------------------
+  - choose:
+      # ---------------------------------------------------------------------
+      # CASE 1: Assets Added
+      # ---------------------------------------------------------------------
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'assets_added' and track_assets_added and event_added_count > 0 }}"
+        sequence:
+          - variables:
+              message: >
+                {% set tpl = message_assets_added_template %}
+                {{ tpl | replace('{album_name}', event_album_name)
+                       | replace('{album_url}', event_album_url)
+                       | replace('{added_count}', event_added_count | string)
+                       | replace('{people}', people_list)
+                       | replace('{assets}', assets_list) }}
+
+          - service: notify.send_message
+            target:
+              entity_id: "{{ notify_targets }}"
+            data:
+              message: "{{ message }}"
+
+      # ---------------------------------------------------------------------
+      # CASE 2: Assets Removed
+      # ---------------------------------------------------------------------
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'assets_removed' and track_assets_removed and event_removed_count > 0 }}"
+        sequence:
+          - variables:
+              message: >
+                {% set tpl = message_assets_removed_template %}
+                {{ tpl | replace('{album_name}', event_album_name)
+                       | replace('{album_url}', event_album_url)
+                       | replace('{removed_count}', event_removed_count | string) }}
+
+          - service: notify.send_message
+            target:
+              entity_id: "{{ notify_targets }}"
+            data:
+              message: "{{ message }}"
+
+      # ---------------------------------------------------------------------
+      # CASE 3: Changed (handles both added and removed in one event)
+      # ---------------------------------------------------------------------
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'changed' }}"
+        sequence:
+          # Send added notification if applicable
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ track_assets_added and event_added_count > 0 }}"
+                sequence:
+                  - variables:
+                      message: >
+                        {% set tpl = message_assets_added_template %}
+                        {{ tpl | replace('{album_name}', event_album_name)
+                               | replace('{album_url}', event_album_url)
+                               | replace('{added_count}', event_added_count | string)
+                               | replace('{people}', people_list)
+                               | replace('{assets}', assets_list) }}
+
+                  - service: notify.send_message
+                    target:
+                      entity_id: "{{ notify_targets }}"
+                    data:
+                      message: "{{ message }}"
+
+          # Send removed notification if applicable
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ track_assets_removed and event_removed_count > 0 }}"
+                sequence:
+                  - variables:
+                      message: >
+                        {% set tpl = message_assets_removed_template %}
+                        {{ tpl | replace('{album_name}', event_album_name)
+                               | replace('{album_url}', event_album_url)
+                               | replace('{removed_count}', event_removed_count | string) }}
+
+                  - service: notify.send_message
+                    target:
+                      entity_id: "{{ notify_targets }}"
+                    data:
+                      message: "{{ message }}"

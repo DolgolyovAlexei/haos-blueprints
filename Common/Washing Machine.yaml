@@ -35,17 +35,17 @@
 #   - lst:   Last Sample Time (ISO timestamp)
 #
 # Message Template Variables:
-#   All message templates support Jinja2 templating with these variables:
-#   - {{ appliance_name }}   - Device name (e.g., "Washing Machine")
-#   - {{ remaining }}     - Remaining time as string (e.g., "01:30:00")
-#   - {{ estimated_end }} - Estimated completion time (e.g., "14:30")
-#   - {{ minutes }}       - Remaining minutes as number (e.g., 90)
-#   - {{ error }}         - Error message text (only in error notification)
-#   - {{ tub_count }}     - Tub clean counter value (only in tub clean notification)
-#   - {{ tub_threshold }} - Tub clean threshold (only in tub clean notification)
-#   - {{ details }}       - Startup details from sensors (only in start notification)
-#   - {{ energy_kwh }}    - Energy consumed in kWh (only in completion notification)
-#   - {{ energy_cost }}   - Estimated cost (only in completion notification)
+#   All message templates support these placeholder variables (use single braces):
+#   - `{appliance_name}` - Device name (e.g., "Washing Machine")
+#   - `{remaining}`      - Remaining time as string (e.g., "01:30:00")
+#   - `{estimated_end}`  - Estimated completion time (e.g., "14:30")
+#   - `{minutes}`        - Remaining minutes as number (e.g., 90)
+#   - `{error}`          - Error message text (only in error notification)
+#   - `{tub_count}`      - Tub clean counter value (only in tub clean notification)
+#   - `{tub_threshold}`  - Tub clean threshold (only in tub clean notification)
+#   - `{details}`        - Startup details from sensors (only in start notification)
+#   - `{energy_kwh}`     - Energy consumed in kWh (only in completion notification)
+#   - `{energy_cost}`    - Estimated cost (only in completion notification)
 #
 # Requirements:
 #   - Sensors for: remaining time, run state, error messages
@@ -157,7 +157,7 @@ blueprint:
       input:
         input_device_name:
           name: "Device Name"
-          description: "Device name used in notification messages (available as {{ appliance_name }} in templates)"
+          description: "Device name used in notification messages (available as `{appliance_name}` in templates)"
           default: "Стиральная машина"
           selector:
             text:
@@ -182,8 +182,8 @@ blueprint:
           name: "Start Message"
           description: >
             Message sent when cycle starts.
-            Variables: {{ appliance_name }}, {{ remaining }}, {{ details }}, {{ estimated_end }}
-          default: "🧺 {{ appliance_name }}: старт. Длительность: `{{ remaining }}`. Завершение: ~{{ estimated_end }}.{{ details }}"
+            Variables: `{appliance_name}`, `{remaining}`, `{details}`, `{estimated_end}`
+          default: "🧺 {appliance_name}: старт. Длительность: `{remaining}`. Завершение: ~{estimated_end}.{details}"
           selector:
             text:
               multiline: true
@@ -192,8 +192,8 @@ blueprint:
           name: "Completed Message"
           description: >
             Message sent when cycle completes.
-            Variables: {{ appliance_name }}
-          default: "🟢 {{ appliance_name }}: завершено. Не забудьте достать вещи!"
+            Variables: `{appliance_name}`
+          default: "🟢 {appliance_name}: завершено. Не забудьте достать вещи!"
           selector:
             text:
               multiline: true
@@ -202,8 +202,8 @@ blueprint:
           name: "Almost Done Message"
           description: >
             Message sent when cycle is about to finish.
-            Variables: {{ appliance_name }}, {{ minutes }}
-          default: "🟢 {{ appliance_name }}: завершение через {{ minutes }} минут."
+            Variables: `{appliance_name}`, `{minutes}`
+          default: "🟢 {appliance_name}: завершение через {minutes} минут."
           selector:
             text:
               multiline: true
@@ -212,8 +212,8 @@ blueprint:
           name: "Preparation Message"
           description: >
             Message sent when device enters preparation mode.
-            Variables: {{ appliance_name }}
-          default: "⚙️ {{ appliance_name }}: подготовка активирована!"
+            Variables: `{appliance_name}`
+          default: "⚙️ {appliance_name}: подготовка активирована!"
           selector:
             text:
               multiline: true
@@ -222,8 +222,8 @@ blueprint:
           name: "Error Message"
           description: >
             Message sent when an error occurs.
-            Variables: {{ appliance_name }}, {{ error }}
-          default: "⚠️ {{ appliance_name }}: ошибка. Детали: {{ error }}. Для более подробной информации обратитесь к приложению LG ThinQ."
+            Variables: `{appliance_name}`, `{error}`
+          default: "⚠️ {appliance_name}: ошибка. Детали: {error}. Для более подробной информации обратитесь к приложению LG ThinQ."
           selector:
             text:
               multiline: true
@@ -232,8 +232,8 @@ blueprint:
           name: "Tub Clean Reminder Message"
           description: >
             Message sent when tub cleaning is needed.
-            Variables: {{ appliance_name }}, {{ tub_count }}, {{ tub_threshold }}
-          default: "⚠️ {{ appliance_name }}: внимание. Необходима чистка барабана. Число стирок: {{ tub_count }}. Допустимый предел: {{ tub_threshold }}."
+            Variables: `{appliance_name}`, `{tub_count}`, `{tub_threshold}`
+          default: "⚠️ {appliance_name}: внимание. Необходима чистка барабана. Число стирок: {tub_count}. Допустимый предел: {tub_threshold}."
           selector:
             text:
               multiline: true
@@ -242,8 +242,8 @@ blueprint:
           name: "Paused Message"
           description: >
             Message sent when cycle is paused.
-            Variables: {{ appliance_name }}, {{ remaining }}
-          default: "⏸️ {{ appliance_name }}: пауза. Осталось: {{ remaining }}."
+            Variables: `{appliance_name}`, `{remaining}`
+          default: "⏸️ {appliance_name}: пауза. Осталось: {remaining}."
           selector:
             text:
               multiline: true
@@ -252,8 +252,8 @@ blueprint:
           name: "Resumed Message"
           description: >
             Message sent when cycle resumes.
-            Variables: {{ appliance_name }}, {{ remaining }}
-          default: "▶️ {{ appliance_name }}: продолжение. Осталось: {{ remaining }}."
+            Variables: `{appliance_name}`, `{remaining}`
+          default: "▶️ {appliance_name}: продолжение. Осталось: {remaining}."
           selector:
             text:
               multiline: true
@@ -262,8 +262,8 @@ blueprint:
           name: "Energy Report Message"
           description: >
             Appended to completion message with energy stats.
-            Variables: {{ energy_kwh }}, {{ energy_cost }}
-          default: " Потребление: {{ energy_kwh }} kWh."
+            Variables: `{energy_kwh}`, `{energy_cost}`
+          default: " Потребление: {energy_kwh} kWh."
           selector:
             text:
               multiline: true
@@ -608,13 +608,13 @@ action:
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Debug - {{ appliance_name }}"
+              title: "Debug - {appliance_name}"
               message: >
                 Trigger: {{ trigger.entity_id }}
                 Run State: {{ run_state }}
                 Is Running: {{ is_running }}
                 Is Paused: {{ is_paused }}
-                Remaining: {{ remaining }}
+                Remaining: {remaining}
                 Remaining Minutes: {{ remaining_time_in_minutes }}
                 Power: {{ current_power }} W
                 Start Sent: {{ automation_state.get(state_notification_about_start_sent, false) }}
@@ -640,7 +640,7 @@ action:
           - variables:
               startup_info_sensors: !input startup_info_sensors
               startup_info_texts: !input startup_info_texts
-              # Build sensor details string for the {{ details }} placeholder
+              # Build sensor details string for the `{details}` placeholder
               details: >
                 {% set ns = namespace(text = '') %}
                 {% for i in range(startup_info_sensors | count) %}
@@ -652,10 +652,10 @@ action:
               # Render the message template with available variables
               message: >
                 {% set tpl = message_start_template %}
-                {{ tpl | replace('{{ appliance_name }}', appliance_name)
-                       | replace('{{ remaining }}', remaining)
-                       | replace('{{ estimated_end }}', est_end)
-                       | replace('{{ details }}', details) }}
+                {{ tpl | replace('{appliance_name}', appliance_name)
+                       | replace('{remaining}', remaining)
+                       | replace('{estimated_end}', est_end)
+                       | replace('{details}', details) }}
 
           # Send start notification
           - service: notify.send_message
@@ -684,11 +684,11 @@ action:
                 sequence:
                   - service: persistent_notification.create
                     data:
-                      title: "{{ appliance_name }} - START"
+                      title: "{appliance_name} - START"
                       message: >
                         Action: CYCLE STARTED
                         Time: {{ now().strftime('%H:%M:%S') }}
-                        Duration: {{ remaining }}
+                        Duration: {remaining}
                         Estimated End: {{ estimated_end_time }}
 
       # -----------------------------------------------------------------------
@@ -717,15 +717,16 @@ action:
               energy_report: >
                 {% if power_sensor | length > 0 and energy_kwh > 0 %}
                   {% set tpl = message_energy_report_template %}
-                  {{ tpl | replace('{{ energy_kwh }}', energy_kwh | string)
-                         | replace('{{ energy_cost }}', energy_cost | string) }}
+                  {{ tpl | replace('{energy_kwh}', energy_kwh | string)
+                         | replace('{energy_cost}', energy_cost | string) }}
                 {% else %}
                   {{ '' }}
                 {% endif %}
               # Render the message template with available variables
               message: >
                 {% set tpl = message_completed_template %}
-                {{ tpl | replace('{{ appliance_name }}', appliance_name) }}{{ energy_report }}
+                {{ tpl | replace('{appliance_name}', appliance_name)
+                        }}{{ energy_report }}
 
           # Send completion notification
           - service: notify.send_message
@@ -756,11 +757,11 @@ action:
                 sequence:
                   - service: persistent_notification.create
                     data:
-                      title: "{{ appliance_name }} - COMPLETE"
+                      title: "{appliance_name} - COMPLETE"
                       message: >
                         Action: CYCLE COMPLETED
                         Time: {{ now().strftime('%H:%M:%S') }}
-                        Energy Used: {{ energy_kwh }} kWh
+                        Energy Used: {energy_kwh} kWh
 
       # -----------------------------------------------------------------------
       # CASE 3: Preparation Mode Started
@@ -787,7 +788,8 @@ action:
               # Render the message template with available variables
               message: >
                 {% set tpl = message_preparation_template %}
-                {{ tpl | replace('{{ appliance_name }}', appliance_name) }}
+                {{ tpl | replace('{appliance_name}', appliance_name)
+                        }}
 
           # Send preparation notification
           - service: notify.send_message
@@ -813,8 +815,8 @@ action:
               # Render the message template with available variables
               message: >
                 {% set tpl = message_error_template %}
-                {{ tpl | replace('{{ appliance_name }}', appliance_name)
-                       | replace('{{ error }}', error) }}
+                {{ tpl | replace('{appliance_name}', appliance_name)
+                       | replace('{error}', error) }}
 
           # Send error notification
           - service: notify.send_message
@@ -851,8 +853,8 @@ action:
               # Render the message template with available variables
               message: >
                 {% set tpl = message_almost_done_template %}
-                {{ tpl | replace('{{ appliance_name }}', appliance_name)
-                       | replace('{{ minutes }}', minutes | string) }}
+                {{ tpl | replace('{appliance_name}', appliance_name)
+                       | replace('{minutes}', minutes | string) }}
 
           # Send "almost done" notification
           - service: notify.send_message
@@ -879,9 +881,9 @@ action:
               # Render the message template with available variables
               message: >
                 {% set tpl = message_tub_clean_template %}
-                {{ tpl | replace('{{ appliance_name }}', appliance_name)
-                       | replace('{{ tub_count }}', tub_count | string)
-                       | replace('{{ tub_threshold }}', tub_threshold | string) }}
+                {{ tpl | replace('{appliance_name}', appliance_name)
+                       | replace('{tub_count}', tub_count | string)
+                       | replace('{tub_threshold}', tub_threshold | string) }}
 
           # Send tub cleaning reminder
           - service: notify.send_message
@@ -916,10 +918,11 @@ action:
                 {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
 
           - variables:
+              # Render the message template with available variables
               message: >
                 {% set tpl = message_paused_template %}
-                {{ tpl | replace('{{ appliance_name }}', appliance_name)
-                       | replace('{{ remaining }}', remaining) }}
+                {{ tpl | replace('{appliance_name}', appliance_name)
+                       | replace('{remaining}', remaining) }}
 
           # Send pause notification
           - service: notify.send_message
@@ -934,11 +937,11 @@ action:
                 sequence:
                   - service: persistent_notification.create
                     data:
-                      title: "{{ appliance_name }} - PAUSED"
+                      title: "{appliance_name} - PAUSED"
                       message: >
                         Action: CYCLE PAUSED
                         Time: {{ now().strftime('%H:%M:%S') }}
-                        Remaining: {{ remaining }}
+                        Remaining: {remaining}
 
       # -----------------------------------------------------------------------
       # CASE 8: Cycle Resumed
@@ -964,10 +967,11 @@ action:
                 {{ automation_state_global | combine({ automation_state_key: new_automation_state }) | tojson }}
 
           - variables:
+              # Render the message template with available variables
               message: >
                 {% set tpl = message_resumed_template %}
-                {{ tpl | replace('{{ appliance_name }}', appliance_name)
-                       | replace('{{ remaining }}', remaining) }}
+                {{ tpl | replace('{appliance_name}', appliance_name)
+                       | replace('{remaining}', remaining) }}
 
           # Send resume notification
           - service: notify.send_message
@@ -982,11 +986,11 @@ action:
                 sequence:
                   - service: persistent_notification.create
                     data:
-                      title: "{{ appliance_name }} - RESUMED"
+                      title: "{appliance_name} - RESUMED"
                       message: >
                         Action: CYCLE RESUMED
                         Time: {{ now().strftime('%H:%M:%S') }}
-                        Remaining: {{ remaining }}
+                        Remaining: {remaining}
 
       # -----------------------------------------------------------------------
       # CASE 9: Power Sample (Accumulate Energy)

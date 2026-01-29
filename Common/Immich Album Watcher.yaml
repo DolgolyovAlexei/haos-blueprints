@@ -7,8 +7,10 @@
 #
 # Features:
 #   - Monitor specific albums by name (whitelist)
+#   - Filter by asset type (track images only, videos only, or both)
 #   - Send notifications to multiple targets simultaneously
 #   - Customizable notification messages with template variables
+#   - Separate templates for image and video assets
 #   - Optional: include people detected in photos
 #   - Optional: include detailed asset list with per-item formatting
 #   - Support for multiple change types (assets added, removed, changed)
@@ -44,8 +46,8 @@
 #   - `{people}`        - Comma-separated list of people detected
 #   - `{assets}`        - Formatted list of added assets (using asset item template)
 #
-# Asset Item Template Variables:
-#   These variables can be used in the asset item template:
+# Asset Item Template Variables (for image/video templates):
+#   These variables can be used in the image and video asset templates:
 #   - `{filename}`      - Original filename of the asset
 #   - `{description}`   - User-provided description of the asset
 #   - `{type}`          - Asset type (IMAGE or VIDEO)
@@ -98,6 +100,20 @@ blueprint:
           name: Track Assets Removed
           description: "Send notifications when assets are removed from albums"
           default: false
+          selector:
+            boolean:
+
+        track_images:
+          name: Track Images
+          description: "Include IMAGE assets in notifications"
+          default: true
+          selector:
+            boolean:
+
+        track_videos:
+          name: Track Videos
+          description: "Include VIDEO assets in notifications"
+          default: true
           selector:
             boolean:
 
@@ -180,12 +196,22 @@ blueprint:
             text:
               multiline: true
 
-        message_asset_item:
-          name: "Asset Item Template"
+        message_asset_image:
+          name: "Image Asset Template"
           description: >
-            Template for each asset in the list.
+            Template for IMAGE assets in the list.
             Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`
-          default: "\n  • {filename} ({type})"
+          default: "\n  • 🖼️ {filename}"
+          selector:
+            text:
+              multiline: true
+
+        message_asset_video:
+          name: "Video Asset Template"
+          description: >
+            Template for VIDEO assets in the list.
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`
+          default: "\n  • 🎬 {filename}"
           selector:
             text:
               multiline: true
@@ -264,6 +290,8 @@ variables:
   max_assets_to_show: !input max_assets_to_show
   track_assets_added: !input track_assets_added
   track_assets_removed: !input track_assets_removed
+  track_images: !input track_images
+  track_videos: !input track_videos
   enable_debug_notifications: !input enable_debug_notifications
 
   # ---------------------------------------------------------------------------
@@ -272,7 +300,8 @@ variables:
   message_assets_added_template: !input message_assets_added
   message_assets_removed_template: !input message_assets_removed
   message_people_format_template: !input message_people_format
-  message_asset_item_template: !input message_asset_item
+  message_asset_image_template: !input message_asset_image
+  message_asset_video_template: !input message_asset_video
   message_assets_format_template: !input message_assets_format
   message_assets_more_template: !input message_assets_more
 
@@ -304,14 +333,28 @@ variables:
       {{ '' }}
     {% endif %}
 
+  # Filter assets based on track_images/track_videos settings
+  filtered_assets: >
+    {% set ns = namespace(assets = []) %}
+    {% for asset in event_added_assets %}
+      {% if (asset.asset_type == 'IMAGE' and track_images) or (asset.asset_type == 'VIDEO' and track_videos) %}
+        {% set ns.assets = ns.assets + [asset] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.assets }}
+
+  # Count of filtered assets (for notifications)
+  filtered_added_count: "{{ filtered_assets | length }}"
+
   # Format assets list for notification
   assets_list: >
-    {% if include_asset_details and event_added_assets | length > 0 %}
+    {% if include_asset_details and filtered_assets | length > 0 %}
       {% set ns = namespace(items = '') %}
-      {% set max_items = max_assets_to_show if max_assets_to_show > 0 else event_added_assets | length %}
-      {% set assets_to_show = event_added_assets[:max_items] %}
+      {% set max_items = max_assets_to_show if max_assets_to_show > 0 else filtered_assets | length %}
+      {% set assets_to_show = filtered_assets[:max_items] %}
       {% for asset in assets_to_show %}
-        {% set item = message_asset_item_template
+        {% set asset_template = message_asset_video_template if asset.asset_type == 'VIDEO' else message_asset_image_template %}
+        {% set item = asset_template
           | replace('{filename}', asset.asset_filename | default('Unknown'))
           | replace('{description}', asset.asset_description | default(''))
           | replace('{type}', asset.asset_type | default('Unknown'))
@@ -321,7 +364,7 @@ variables:
           | replace('{people}', (asset.people | default([])) | join(', ')) %}
         {% set ns.items = ns.items ~ item %}
       {% endfor %}
-      {% set more_count = event_added_assets | length - max_items %}
+      {% set more_count = filtered_assets | length - max_items %}
       {% if more_count > 0 %}
         {% set ns.items = ns.items ~ message_assets_more_template | replace('{more_count}', more_count | string) %}
       {% endif %}
@@ -331,13 +374,20 @@ variables:
     {% endif %}
 
   # Determine if this event type should trigger a notification
+  # For added assets, check filtered count (respects track_images/track_videos)
   should_notify: >
-    {% if trigger.id == 'assets_added' and track_assets_added and event_added_count > 0 %}
+    {% if trigger.id == 'assets_added' and track_assets_added and filtered_added_count | int > 0 %}
       {{ true }}
     {% elif trigger.id == 'assets_removed' and track_assets_removed and event_removed_count > 0 %}
       {{ true }}
     {% elif trigger.id == 'changed' and (track_assets_added or track_assets_removed) %}
-      {{ true }}
+      {% if track_assets_added and filtered_added_count | int > 0 %}
+        {{ true }}
+      {% elif track_assets_removed and event_removed_count > 0 %}
+        {{ true }}
+      {% else %}
+        {{ false }}
+      {% endif %}
     {% else %}
       {{ false }}
     {% endif %}
@@ -376,12 +426,15 @@ action:
                 Album ID: {{ event_album_id }}
                 Album URL: {{ event_album_url }}
                 Change Type: {{ event_change_type }}
-                Added Count: {{ event_added_count }}
+                Added Count (raw): {{ event_added_count }}
+                Added Count (filtered): {{ filtered_added_count }}
                 Removed Count: {{ event_removed_count }}
                 Added Assets: {{ event_added_assets | length }}
                 People: {{ event_people | join(', ') }}
                 Is Tracked: {{ is_album_tracked }}
                 Should Notify: {{ should_notify }}
+                Track Images: {{ track_images }}
+                Track Videos: {{ track_videos }}
                 Include Asset Details: {{ include_asset_details }}
 
   # ---------------------------------------------------------------------------
@@ -393,14 +446,14 @@ action:
       # ---------------------------------------------------------------------
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id == 'assets_added' and track_assets_added and event_added_count > 0 }}"
+            value_template: "{{ trigger.id == 'assets_added' and track_assets_added and filtered_added_count | int > 0 }}"
         sequence:
           - variables:
               message: >
                 {% set tpl = message_assets_added_template %}
                 {{ tpl | replace('{album_name}', event_album_name)
                        | replace('{album_url}', event_album_url)
-                       | replace('{added_count}', event_added_count | string)
+                       | replace('{added_count}', filtered_added_count | string)
                        | replace('{people}', people_list)
                        | replace('{assets}', assets_list) }}
 
@@ -441,14 +494,14 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ track_assets_added and event_added_count > 0 }}"
+                    value_template: "{{ track_assets_added and filtered_added_count | int > 0 }}"
                 sequence:
                   - variables:
                       message: >
                         {% set tpl = message_assets_added_template %}
                         {{ tpl | replace('{album_name}', event_album_name)
                                | replace('{album_url}', event_album_url)
-                               | replace('{added_count}', event_added_count | string)
+                               | replace('{added_count}', filtered_added_count | string)
                                | replace('{people}', people_list)
                                | replace('{assets}', assets_list) }}
 

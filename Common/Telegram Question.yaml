@@ -17,6 +17,11 @@
 # - From notify entities with friendly names like "Alex (123456789)"
 #   The number in parentheses is extracted as the chat ID
 #
+# Multiple Telegram Bots:
+# If you have multiple Telegram bots configured in Home Assistant, you must
+# specify the config_entry_id to identify which bot to use.
+# Find it in: Settings → Devices & Services → Telegram Bot → your bot → URL
+#
 # Callback Data Format:
 # Each button sends callback data: /<keyboard_id>_<button_index>
 # Example: /my_keyboard_0 for first button of keyboard "my_keyboard"
@@ -61,6 +66,18 @@ blueprint:
             entity:
               domain: notify
               multiple: true
+
+        config_entry_id:
+          name: Telegram Bot Config Entry ID
+          description: >
+            Required if you have multiple Telegram bots configured.
+            Find this in Home Assistant: Settings → Devices & Services → Telegram Bot
+            → Click on your bot → look at the URL, the ID is after /config_entry/
+            Example: "01JKXXXXXXXXXXXXXXXXXXX"
+            Leave empty if you only have one Telegram bot.
+          default: ""
+          selector:
+            text:
 
     # -------------------------------------------------------------------------
     # Message Configuration
@@ -157,6 +174,22 @@ blueprint:
           selector:
             action: {}
 
+    # -------------------------------------------------------------------------
+    # Debug
+    # -------------------------------------------------------------------------
+    debug_group:
+      name: "Debug"
+      collapsed: true
+      input:
+        enable_debug:
+          name: Enable Debug Notifications
+          description: >
+            Send persistent notifications for debugging automation behavior.
+            Shows resolved chat IDs, callback data, and configuration.
+          default: false
+          selector:
+            boolean:
+
 # Parallel mode allows multiple button presses to be processed simultaneously
 mode: parallel
 
@@ -179,6 +212,7 @@ variables:
   hide_keyboard_on_press: !input hide_keyboard_on_press
   hide_message_on_press: !input hide_message_on_press
   answers: !input answers
+  config_entry_id: !input config_entry_id
 
   # Callback references (needed for condition checks)
   button_1_callback: !input button_1_callback
@@ -200,32 +234,43 @@ variables:
       {{ callback_data.startswith('/' ~ keyboard_id ~ '_') }}
     {% endif %}
 
-  # Debug flag - set to true to enable persistent notifications for troubleshooting
-  is_debug: false
+  # Debug flag
+  is_debug: !input enable_debug
 
 # =============================================================================
 # Actions
 # =============================================================================
 action:
   # ---------------------------------------------------------------------------
-  # Debug Logging (optional)
+  # Debug Logging - Callback Events
   # ---------------------------------------------------------------------------
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ is_debug }}"
+            value_template: "{{ is_debug and not is_manual_trigger }}"
         sequence:
           - service: persistent_notification.create
             data:
-              title: "Telegram Keyboard Debug"
+              title: "Telegram Keyboard Debug - Callback"
               message: >
-                Trigger platform: {{ trigger.platform | default('manual') }}
-                Is manual trigger: {{ is_manual_trigger }}
-                Is our callback: {{ is_our_callback }}
-                {% if not is_manual_trigger %}
-                Callback data: {{ trigger.event.data.data | default('N/A') }}
-                Chat ID: {{ trigger.event.data.chat_id | default('N/A') }}
+                **Trigger Info:**
+                - Platform: {{ trigger.platform | default('unknown') }}
+                - Is our callback: {{ is_our_callback }}
+
+                {% if is_our_callback %}
+                **Callback Data:**
+                - Raw data: {{ trigger.event.data.data | default('N/A') }}
+                - Chat ID: {{ trigger.event.data.chat_id | default('N/A') }}
+                - Message ID: {{ trigger.event.data.message.message_id | default('N/A') }}
+                - Keyboard ID: {{ keyboard_id }}
+                {% else %}
+                **Ignored** (callback not for this keyboard)
+                - Expected prefix: /{{ keyboard_id }}_
+                - Received: {{ trigger.event.data.data | default('N/A') }}
                 {% endif %}
+
+                **Config:**
+                - Config Entry ID: {{ config_entry_id if config_entry_id | length > 0 else '(not set)' }}
 
   # ---------------------------------------------------------------------------
   # Handle Button Press (Callback Event)
@@ -271,6 +316,8 @@ action:
                       # Reply to original message unless we're deleting it
                       reply_to_message_id: >
                         {{ omit if hide_message_on_press else message_id }}
+                      config_entry_id: >
+                        {{ config_entry_id if config_entry_id | length > 0 else omit }}
 
           # Handle message/keyboard cleanup
           - choose:
@@ -281,6 +328,8 @@ action:
                     data:
                       chat_id: "{{ chat_id }}"
                       message_id: "{{ message_id }}"
+                      config_entry_id: >
+                        {{ config_entry_id if config_entry_id | length > 0 else omit }}
 
               # Just remove keyboard (keep message)
               - conditions: "{{ hide_keyboard_on_press }}"
@@ -290,6 +339,8 @@ action:
                       chat_id: "{{ chat_id }}"
                       message_id: "{{ message_id }}"
                       inline_keyboard: []
+                      config_entry_id: >
+                        {{ config_entry_id if config_entry_id | length > 0 else omit }}
 
   # ---------------------------------------------------------------------------
   # Send Initial Message (Manual Trigger / Service Call)
@@ -304,13 +355,14 @@ action:
               chat_ids: !input chat_ids
 
               # Extract chat IDs from notify entity friendly names
-              # Format: "Name (123456789)" -> extracts "123456789"
+              # Format: "Name (123456789)" or "Name (-123456789)" -> extracts the number
+              # Supports both positive (user) and negative (group/channel) chat IDs
               chat_entities: !input chat_entities
               chat_ids_from_entities: >
                 {% set ns = namespace(ids=[]) %}
                 {% for entity in chat_entities %}
                   {% set friendly_name = state_attr(entity, 'friendly_name') | default('') %}
-                  {% set match = friendly_name | regex_findall('\((\d+)\)') %}
+                  {% set match = friendly_name | regex_findall('\\((-?\\d+)\\)') %}
                   {% if match | length > 0 %}
                     {% set ns.ids = ns.ids + [match[0]] %}
                   {% endif %}
@@ -331,6 +383,36 @@ action:
                 {% endfor %}
                 {{ ns.buttons }}
 
+          # Debug logging for manual trigger
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_debug }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Telegram Keyboard Debug - Send Message"
+                      message: >
+                        **Chat ID Resolution:**
+                        - Direct chat IDs: {{ chat_ids | join(', ') if chat_ids | length > 0 else '(none)' }}
+                        - From entities: {{ chat_ids_from_entities | join(', ') if chat_ids_from_entities | length > 0 else '(none)' }}
+                        - **Resolved IDs: {{ result_chat_ids | join(', ') if result_chat_ids | length > 0 else '(none)' }}**
+
+                        **Entity Parsing:**
+                        {% for entity in chat_entities %}
+                        - {{ entity }}: "{{ state_attr(entity, 'friendly_name') | default('N/A') }}"
+                        {% else %}
+                        - (no entities configured)
+                        {% endfor %}
+
+                        **Message:**
+                        - Keyboard ID: {{ keyboard_id }}
+                        - Buttons: {{ buttons | join(', ') }}
+                        - Message: {{ message_text[:100] }}{{ '...' if message_text | length > 100 else '' }}
+
+                        **Config:**
+                        - Config Entry ID: {{ config_entry_id if config_entry_id | length > 0 else '(not set)' }}
+
           # Validate we have at least one chat ID
           - choose:
               - conditions: "{{ result_chat_ids | length == 0 }}"
@@ -343,3 +425,5 @@ action:
               target: "{{ result_chat_ids }}"
               message: "{{ message_text }}"
               inline_keyboard: "{{ inline_keyboard }}"
+              config_entry_id: >
+                {{ config_entry_id if config_entry_id | length > 0 else omit }}

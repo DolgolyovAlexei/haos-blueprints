@@ -229,10 +229,13 @@ blueprint:
             boolean:
 
         max_assets_to_show:
-          name: Maximum Assets to Show
+          name: Maximum Assets to Show in Text
           description: >
-            Maximum number of assets to include in the notification.
-            Set to 0 for unlimited. Useful to prevent very long notifications.
+            Maximum number of assets to list in the text notification message
+            (the `{assets}` placeholder). Only applies when "Include Asset Details" is enabled.
+            Set to 0 for unlimited. Excess assets show as "...and X more".
+            Note: This is separate from "Maximum Media to Send" which controls
+            the actual photo/video attachments sent to Telegram.
           default: 5
           selector:
             number:
@@ -390,11 +393,25 @@ blueprint:
           name: Maximum Media to Send
           description: >
             Maximum number of photos/videos to send as attachments.
-            Set to 0 for unlimited. Recommended to keep low to avoid spam.
-          default: 5
+            Set to 0 for unlimited.
+          default: 50
           selector:
             number:
               min: 0
+              max: 50
+              mode: slider
+
+        max_media_per_group:
+          name: Maximum Media per Group
+          description: >
+            Maximum number of items in a single media group (album).
+            Only applies when "Send as Media Group" is enabled.
+            Telegram allows 2-10 items per group.
+            If more media is available, multiple groups will be sent.
+          default: 10
+          selector:
+            number:
+              min: 2
               max: 10
               mode: slider
 
@@ -598,6 +615,7 @@ variables:
   telegram_notify_targets: !input telegram_notify_targets
   telegram_chat_ids_raw: !input telegram_chat_ids
   max_media_to_send: !input max_media_to_send
+  max_media_per_group: !input max_media_per_group
   telegram_media_delay: !input telegram_media_delay
   telegram_video_warning_template: !input telegram_video_warning
   telegram_disable_url_preview: !input telegram_disable_url_preview
@@ -1049,7 +1067,9 @@ action:
 
                         **Media Group Mode:**
                         - Enabled: {{ telegram_send_as_media_group }}
+                        - Max items per group: {{ max_media_per_group }}
                         - Will use media group: {{ telegram_send_as_media_group and media_to_send | length >= 2 }}
+                        - Number of groups: {{ ((media_to_send | length) / (max_media_per_group | int)) | round(0, 'ceil') | int if telegram_send_as_media_group else 'N/A' }}
 
           # Build the notification message for Telegram
           # Uses {video_warning} placeholder which is populated when videos are present
@@ -1097,38 +1117,63 @@ action:
                             {{ telegram_send_as_media_group and
                                media_to_send | length >= 2 }}
                       sequence:
-                        # Build the media array for Telegram API
+                        # Calculate number of groups needed
                         - variables:
-                            # Build JSON array for Telegram sendMediaGroup API
-                            # Limit to 10 items (Telegram max for media groups)
-                            media_group_json: >
-                              {% set ns = namespace(items = []) %}
-                              {% set items_to_send = media_to_send[:10] %}
-                              {% for asset in items_to_send %}
-                                {% set asset_type = asset.asset_type | default('IMAGE') %}
-                                {% set playback_url = asset.asset_playback_url | default('') %}
-                                {% set download_url = asset.asset_download_url | default('') %}
-                                {% set view_url = asset.asset_url | default('') %}
-                                {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
-                                  {% set media_url = playback_url %}
-                                {% elif download_url | length > 0 %}
-                                  {% set media_url = download_url %}
-                                {% else %}
-                                  {% set media_url = view_url %}
-                                {% endif %}
-                                {% set media_type = 'video' if asset_type == 'VIDEO' else 'photo' %}
-                                {% set item = {'type': media_type, 'media': media_url} %}
-                                {% set ns.items = ns.items + [item] %}
-                              {% endfor %}
-                              {{ ns.items | to_json }}
+                            group_size: "{{ max_media_per_group | int }}"
+                            total_items: "{{ media_to_send | length }}"
+                            num_groups: "{{ ((total_items | int) / (group_size | int)) | round(0, 'ceil') | int }}"
 
-                        # Call rest_command to send media group
-                        - service: rest_command.immich_album_watcher_telegram_send_media_group
-                          continue_on_error: true
-                          data:
-                            chat_id: "{{ current_chat_id }}"
-                            media: "{{ media_group_json }}"
-                            reply_to_message_id: "{{ reply_to_message_id if reply_to_message_id > 0 else 0 }}"
+                        # Send each media group
+                        - repeat:
+                            count: "{{ num_groups }}"
+                            sequence:
+                              - variables:
+                                  group_index: "{{ repeat.index - 1 }}"
+                                  start_idx: "{{ (group_index | int) * (group_size | int) }}"
+                                  end_idx: "{{ [(start_idx | int) + (group_size | int), total_items | int] | min }}"
+                                  # Build JSON array for this group
+                                  media_group_json: >
+                                    {% set ns = namespace(items = []) %}
+                                    {% set items_to_send = media_to_send[start_idx | int:end_idx | int] %}
+                                    {% for asset in items_to_send %}
+                                      {% set asset_type = asset.asset_type | default('IMAGE') %}
+                                      {% set playback_url = asset.asset_playback_url | default('') %}
+                                      {% set download_url = asset.asset_download_url | default('') %}
+                                      {% set view_url = asset.asset_url | default('') %}
+                                      {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
+                                        {% set media_url = playback_url %}
+                                      {% elif download_url | length > 0 %}
+                                        {% set media_url = download_url %}
+                                      {% else %}
+                                        {% set media_url = view_url %}
+                                      {% endif %}
+                                      {% set media_type = 'video' if asset_type == 'VIDEO' else 'photo' %}
+                                      {% set item = {'type': media_type, 'media': media_url} %}
+                                      {% set ns.items = ns.items + [item] %}
+                                    {% endfor %}
+                                    {{ ns.items | to_json }}
+
+                              # Only send if group has at least 2 items (Telegram requirement)
+                              - choose:
+                                  - conditions:
+                                      - condition: template
+                                        value_template: "{{ (end_idx | int) - (start_idx | int) >= 2 }}"
+                                    sequence:
+                                      - service: rest_command.immich_album_watcher_telegram_send_media_group
+                                        continue_on_error: true
+                                        data:
+                                          chat_id: "{{ current_chat_id }}"
+                                          media: "{{ media_group_json }}"
+                                          reply_to_message_id: "{{ reply_to_message_id if reply_to_message_id > 0 else 0 }}"
+
+                                      # Small delay between groups to avoid rate limiting
+                                      - choose:
+                                          - conditions:
+                                              - condition: template
+                                                value_template: "{{ repeat.index < num_groups | int and telegram_media_delay > 0 }}"
+                                            sequence:
+                                              - delay:
+                                                  milliseconds: "{{ telegram_media_delay }}"
 
                   # ---------------------------------------------------------
                   # OPTION 2: Send as Individual Messages (Default)

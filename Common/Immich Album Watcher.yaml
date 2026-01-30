@@ -140,12 +140,24 @@ blueprint:
             text:
               multiple: true
 
-        album_names:
-          name: Album Names to Track
+        album_ids:
+          name: Album IDs to Track
           description: >
-            List of album names to monitor for changes.
-            Only albums matching these names will trigger notifications.
+            List of album IDs to monitor for changes.
+            Only albums matching these IDs will trigger notifications.
             Leave empty to track all albums.
+            Album IDs are stable and won't change if albums get renamed.
+          default: []
+          selector:
+            text:
+              multiple: true
+
+        album_names:
+          name: Album Display Names
+          description: >
+            List of album display names (in the same order as Album IDs).
+            Used for periodic summary notifications to show human-readable album names.
+            If not specified, album names from events will be used.
           default: []
           selector:
             text:
@@ -313,6 +325,15 @@ blueprint:
             text:
               multiline: true
 
+        date_format:
+          name: "Date Format"
+          description: >
+            Format for displaying asset creation dates.
+            Uses Python strftime format codes (e.g., %Y-%m-%d %H:%M).
+          default: "%d %b %Y, %H:%M"
+          selector:
+            text:
+
     # -------------------------------------------------------------------------
     # Telegram Media Attachments
     # -------------------------------------------------------------------------
@@ -449,7 +470,7 @@ blueprint:
           name: Album Item Template
           description: >
             Template for each album in the summary list.
-            Variables: `{album_name}`, `{album_url}`
+            Variables: `{album_name}`, `{album_id}`, `{album_url}`
           default: "\n  • {album_name}: {album_url}"
           selector:
             text:
@@ -509,6 +530,7 @@ variables:
   # Input Variables
   # ---------------------------------------------------------------------------
   hub_names: !input hub_names
+  album_ids: !input album_ids
   album_names: !input album_names
   album_url_entities: !input album_url_entities
   notify_targets: !input notify_targets
@@ -568,6 +590,7 @@ variables:
   message_asset_video_template: !input message_asset_video
   message_assets_format_template: !input message_assets_format
   message_assets_more_template: !input message_assets_more
+  date_format: !input date_format
 
   # ---------------------------------------------------------------------------
   # Event Data
@@ -591,7 +614,7 @@ variables:
 
   # Check if this album should be tracked (empty list = track all)
   is_album_tracked: >
-    {{ album_names | length == 0 or event_album_name in album_names }}
+    {{ album_ids | length == 0 or event_album_id in album_ids }}
 
   # Format people list for notification
   people_list: >
@@ -623,11 +646,13 @@ variables:
       {% set assets_to_show = filtered_assets[:max_items] %}
       {% for asset in assets_to_show %}
         {% set asset_template = message_asset_video_template if asset.asset_type == 'VIDEO' else message_asset_image_template %}
+        {% set raw_date = asset.asset_created | default('') %}
+        {% set formatted_date = raw_date | as_datetime | strftime(date_format) if raw_date | length > 0 else '' %}
         {% set item = asset_template
           | replace('{filename}', asset.asset_filename | default('Unknown'))
           | replace('{description}', asset.asset_description | default(''))
           | replace('{type}', asset.asset_type | default('Unknown'))
-          | replace('{created}', asset.asset_created | default('Unknown'))
+          | replace('{created}', formatted_date)
           | replace('{owner}', asset.asset_owner | default('Unknown'))
           | replace('{url}', asset.asset_url | default(''))
           | replace('{people}', (asset.people | default([])) | join(', '))
@@ -648,12 +673,8 @@ variables:
     {{ filtered_assets | selectattr('asset_type', 'equalto', 'VIDEO') | list | length > 0 }}
 
   # Video warning text (only populated when Telegram media is enabled and videos are present)
-  video_warning_text: >
-    {% if send_telegram_media and has_videos_in_assets and telegram_video_warning_template | length > 0 %}
-      {{ telegram_video_warning_template }}
-    {% else %}
-      {{ '' }}
-    {% endif %}
+  video_warning_text: >-
+    {% if send_telegram_media and has_videos_in_assets and telegram_video_warning_template | length > 0 %}{{ telegram_video_warning_template }}{% else %}{{ '' }}{% endif %}
 
   # Filter assets that have valid URLs (for Telegram media)
   # URL preference: playback_url (videos) > download_url > asset_url (viewer)
@@ -705,12 +726,14 @@ variables:
   # Reads URLs from entity states (sensor or input_text)
   periodic_albums_list: >
     {% set ns = namespace(items = '') %}
-    {% for i in range(album_names | length) %}
-      {% set name = album_names[i] %}
+    {% for i in range(album_ids | length) %}
+      {% set id = album_ids[i] %}
+      {% set name = album_names[i] if i < (album_names | length) else id %}
       {% set url_entity = album_url_entities[i] | default('') if i < (album_url_entities | length) else '' %}
       {% set url = states(url_entity) | default('') if url_entity | length > 0 else '' %}
       {% set item = periodic_album_template
         | replace('{album_name}', name)
+        | replace('{album_id}', id)
         | replace('{album_url}', url) %}
       {% set ns.items = ns.items ~ item %}
     {% endfor %}
@@ -720,7 +743,7 @@ variables:
   periodic_summary_formatted: >
     {{ periodic_summary_message_template
        | replace('{albums}', periodic_albums_list)
-       | replace('{album_count}', album_names | length | string) }}
+       | replace('{album_count}', album_ids | length | string) }}
 
 # =============================================================================
 # CONDITIONS
@@ -1023,10 +1046,12 @@ action:
                           # Use image/video asset templates for captions
                           caption: >
                             {% set tpl = message_asset_video_template if asset_type == 'VIDEO' else message_asset_image_template %}
+                            {% set raw_date = current_asset.asset_created | default('') %}
+                            {% set formatted_date = raw_date | as_datetime | strftime(date_format) if raw_date | length > 0 else '' %}
                             {{ tpl | replace('{filename}', current_asset.asset_filename | default(''))
                                    | replace('{description}', current_asset.asset_description | default(''))
                                    | replace('{type}', current_asset.asset_type | default(''))
-                                   | replace('{created}', current_asset.asset_created | default(''))
+                                   | replace('{created}', formatted_date)
                                    | replace('{owner}', current_asset.asset_owner | default(''))
                                    | replace('{url}', current_asset.asset_url | default(''))
                                    | replace('{people}', (current_asset.people | default([])) | join(', '))

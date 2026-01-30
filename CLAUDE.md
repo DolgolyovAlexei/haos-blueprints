@@ -11,3 +11,11 @@ When reviewing or refactoring blueprint files:
 3. **Spelling & Grammar** - Correct any spelling or grammatical errors
 4. **Documentation** - Add comments to make the code easier to read and understand
 5. **User-Friendly Messages** - Use entity friendly names instead of entity IDs in notification messages
+
+## Versioning
+
+After any change to repository content (blueprints, documentation, or other files), update the `version` field in `manifest.json` using semantic versioning:
+
+- **Major** (X.0.0) - Breaking changes or major new features
+- **Minor** (0.X.0) - New features, enhancements, or significant improvements
+- **Patch** (0.0.X) - Bug fixes, typos, small tweaks, or documentation updates

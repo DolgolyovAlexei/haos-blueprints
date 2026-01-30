@@ -15,6 +15,7 @@
 #   - Optional: include people detected in photos
 #   - Optional: include detailed asset list with per-item formatting
 #   - Support for multiple change types (assets added, removed, changed)
+#   - Optional: send photos/videos as Telegram media attachments
 #
 # Event Data from Immich:
 #   - `hub_name`:       Name of the Immich hub/instance that sent the event
@@ -29,24 +30,27 @@
 #   - `people`:         List of all people detected in the album
 #
 # Added Assets Fields (each item in `added_assets`):
-#   - `id`:                Unique asset ID
-#   - `asset_type`:        Type of asset (IMAGE or VIDEO)
-#   - `asset_filename`:    Original filename of the asset
-#   - `asset_description`: User-provided description of the asset
-#   - `asset_created`:     Date/time when the asset was originally created
-#   - `asset_owner`:       Display name of the user who owns the asset
-#   - `asset_owner_id`:    Unique ID of the user who owns the asset
-#   - `asset_url`:         Public URL to view the asset (only if album has shared link)
-#   - `people`:            List of people detected in this specific asset
+#   - `id`:                 Unique asset ID
+#   - `asset_type`:         Type of asset (IMAGE or VIDEO)
+#   - `asset_filename`:     Original filename of the asset
+#   - `asset_description`:  User-provided description of the asset
+#   - `asset_created`:      Date/time when the asset was originally created
+#   - `asset_owner`:        Display name of the user who owns the asset
+#   - `asset_owner_id`:     Unique ID of the user who owns the asset
+#   - `asset_url`:          Public URL to view the asset (only if album has shared link)
+#   - `asset_download_url`: Direct download URL for the asset (preferred for Telegram images)
+#   - `asset_playback_url`: Playback/streaming URL for videos (preferred for Telegram videos)
+#   - `people`:             List of people detected in this specific asset
 #
 # Message Template Variables:
 #   All message templates support these placeholder variables (use single braces):
-#   - `{album_name}`    - Name of the album
-#   - `{album_url}`     - Public URL to view the album (empty if no shared link)
-#   - `{added_count}`   - Number of assets added
-#   - `{removed_count}` - Number of assets removed
-#   - `{people}`        - Comma-separated list of people detected
-#   - `{assets}`        - Formatted list of added assets (using asset item template)
+#   - `{album_name}`     - Name of the album
+#   - `{album_url}`      - Public URL to view the album (empty if no shared link)
+#   - `{added_count}`    - Number of assets added
+#   - `{removed_count}`  - Number of assets removed
+#   - `{people}`         - Comma-separated list of people detected
+#   - `{assets}`         - Formatted list of added assets (using asset item template)
+#   - `{video_warning}`  - Warning about video size limits (Telegram only, empty otherwise)
 #
 # Asset Item Template Variables (for image/video templates):
 #   These variables can be used in the image and video asset templates:
@@ -57,6 +61,39 @@
 #   - `{owner}`         - Owner display name
 #   - `{url}`           - Public URL to view the asset (empty if no shared link)
 #   - `{people}`        - People detected in this asset
+#
+# Telegram Media Attachments:
+#   When enabled, photos/videos are sent as media attachments to Telegram
+#   using Home Assistant's telegram_bot integration.
+#
+#   Supports multiple recipients via two methods:
+#   1. Notify Entities: Select Telegram notify entities. Chat ID is extracted
+#      from the friendly name. Format: "Name (123456789)"
+#   2. Raw Chat IDs: Enter chat IDs directly for groups/channels.
+#
+#   Requirements:
+#   - Telegram Bot integration must be configured in Home Assistant
+#   - Immich album must have a shared link (to generate public asset URLs)
+#   - If you have multiple Telegram bots, specify the config_entry_id
+#     (find it in: Settings → Devices & Services → Telegram Bot → your bot → URL)
+#
+#   Behavior:
+#   - First sends a text notification message to each Telegram chat
+#   - Then sends photos/videos as replies to that notification message
+#   - Media is sent as individual messages (Home Assistant doesn't support
+#     Telegram media groups / albums)
+#
+#   Limitations:
+#   - Only assets with valid public URLs will be sent
+#   - Telegram has a 50 MB file size limit for media sent via URL
+#     (large videos will fail with "Request Entity Too Large" error)
+#   - Optional video warning can be shown when videos are present
+#
+#   Caption Template Variables:
+#   - `{filename}`      - Original filename of the asset
+#   - `{description}`   - User-provided description of the asset
+#   - `{album_name}`    - Name of the album
+#   - `{owner}`         - Owner display name
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
@@ -182,8 +219,8 @@ blueprint:
           name: "Assets Added Message"
           description: >
             Message sent when assets are added to an album.
-            Variables: `{album_name}`, `{album_url}`, `{added_count}`, `{people}`, `{assets}`
-          default: "📷 {added_count} new photo(s) added to album \"{album_name}\".{people}{assets}"
+            Variables: `{album_name}`, `{album_url}`, `{added_count}`, `{people}`, `{assets}`, `{video_warning}`
+          default: "📷 {added_count} new photo(s) added to album \"{album_name}\".{people}{assets}{video_warning}"
           selector:
             text:
               multiline: true
@@ -251,6 +288,94 @@ blueprint:
               multiline: true
 
     # -------------------------------------------------------------------------
+    # Telegram Media Attachments
+    # -------------------------------------------------------------------------
+    telegram_group:
+      name: "Telegram Media"
+      description: "Send photos/videos as Telegram attachments (requires public asset URLs)"
+      collapsed: true
+      input:
+        send_telegram_media:
+          name: Send Media to Telegram
+          description: >
+            Send photos/videos as media attachments to Telegram.
+            IMPORTANT: This requires assets to have public URLs, meaning the
+            Immich album must have a shared link enabled.
+            Note: Due to Home Assistant limitations, media is sent as individual
+            messages rather than grouped albums.
+          default: false
+          selector:
+            boolean:
+
+        telegram_config_entry_id:
+          name: Telegram Bot Config Entry ID
+          description: >
+            Required if you have multiple Telegram bots configured.
+            Find this in Home Assistant: Settings → Devices & Services → Telegram Bot
+            → Click on your bot → look at the URL, the ID is after /config_entry/
+            Example: "01JKXXXXXXXXXXXXXXXXXXX"
+            Leave empty if you only have one Telegram bot.
+          default: ""
+          selector:
+            text:
+
+        telegram_notify_targets:
+          name: Telegram Notify Targets
+          description: >
+            Select Telegram notify entities to send media to.
+            The chat ID will be extracted from the entity's friendly name.
+            Expected format: "Name (123456789)" where the number in parentheses is the chat ID.
+          default: []
+          selector:
+            entity:
+              domain: notify
+              multiple: true
+
+        telegram_chat_ids:
+          name: Additional Telegram Chat IDs
+          description: >
+            Additional raw chat IDs to send media to (one per line).
+            Use this for chat IDs not associated with notify entities,
+            or as a fallback if friendly name parsing doesn't work.
+            Can be user IDs (positive) or group IDs (negative).
+          default: []
+          selector:
+            text:
+              multiple: true
+
+        max_media_to_send:
+          name: Maximum Media to Send
+          description: >
+            Maximum number of photos/videos to send as attachments.
+            Set to 0 for unlimited. Recommended to keep low to avoid spam.
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 10
+              mode: slider
+
+        telegram_caption_template:
+          name: Media Caption Template
+          description: >
+            Caption for each media attachment.
+            Variables: `{filename}`, `{description}`, `{album_name}`, `{owner}`
+          default: "{filename}"
+          selector:
+            text:
+
+        telegram_video_warning:
+          name: Video Warning Message
+          description: >
+            Warning message appended to notifications when videos are present.
+            Telegram has a 50 MB file size limit for media sent via URL,
+            so large videos may fail to send. Leave empty to disable warning.
+          default: "\n\n⚠️ Note: Videos may not be sent due to Telegram's 50 MB file size limit."
+          selector:
+            text:
+              multiline: true
+
+    # -------------------------------------------------------------------------
     # Debug
     # -------------------------------------------------------------------------
     debug:
@@ -307,6 +432,37 @@ variables:
   track_images: !input track_images
   track_videos: !input track_videos
   enable_debug_notifications: !input enable_debug_notifications
+
+  # Telegram Media Settings
+  send_telegram_media: !input send_telegram_media
+  telegram_config_entry_id: !input telegram_config_entry_id
+  telegram_notify_targets: !input telegram_notify_targets
+  telegram_chat_ids_raw: !input telegram_chat_ids
+  max_media_to_send: !input max_media_to_send
+  telegram_caption_template: !input telegram_caption_template
+  telegram_video_warning_template: !input telegram_video_warning
+
+  # Parse chat IDs from notify entity friendly names (format: "Name (123456789)")
+  # and combine with raw chat IDs
+  telegram_chat_ids: >
+    {% set ns = namespace(ids = []) %}
+    {# Extract chat IDs from notify entity friendly names #}
+    {% for entity_id in telegram_notify_targets %}
+      {% set friendly_name = state_attr(entity_id, 'friendly_name') | default('') %}
+      {# Match number in parentheses at the end: "Diana (350705409)" -> "350705409" #}
+      {% set match = friendly_name | regex_findall('\\((-?\\d+)\\)\\s*$') %}
+      {% if match | length > 0 %}
+        {% set ns.ids = ns.ids + [match[0]] %}
+      {% endif %}
+    {% endfor %}
+    {# Add raw chat IDs #}
+    {% for chat_id in telegram_chat_ids_raw %}
+      {% set clean_id = chat_id | trim %}
+      {% if clean_id | length > 0 and clean_id not in ns.ids %}
+        {% set ns.ids = ns.ids + [clean_id] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.ids }}
 
   # ---------------------------------------------------------------------------
   # Message Templates
@@ -391,6 +547,32 @@ variables:
     {% else %}
       {{ '' }}
     {% endif %}
+
+  # Check if filtered assets contain any videos (for Telegram warning)
+  has_videos_in_assets: >
+    {{ filtered_assets | selectattr('asset_type', 'equalto', 'VIDEO') | list | length > 0 }}
+
+  # Video warning text (only populated when Telegram media is enabled and videos are present)
+  video_warning_text: >
+    {% if send_telegram_media and has_videos_in_assets and telegram_video_warning_template | length > 0 %}
+      {{ telegram_video_warning_template }}
+    {% else %}
+      {{ '' }}
+    {% endif %}
+
+  # Filter assets that have valid URLs (for Telegram media)
+  # URL preference: playback_url (videos) > download_url > asset_url (viewer)
+  assets_with_urls: >
+    {% set ns = namespace(assets = []) %}
+    {% for asset in filtered_assets %}
+      {% set playback_url = asset.asset_playback_url | default('') %}
+      {% set download_url = asset.asset_download_url | default('') %}
+      {% set view_url = asset.asset_url | default('') %}
+      {% if playback_url | length > 0 or download_url | length > 0 or view_url | length > 0 %}
+        {% set ns.assets = ns.assets + [asset] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.assets }}
 
   # Determine if this event type should trigger a notification
   # For added assets, check filtered count (respects track_images/track_videos)
@@ -480,7 +662,8 @@ action:
                        | replace('{album_url}', event_album_url)
                        | replace('{added_count}', filtered_added_count | string)
                        | replace('{people}', people_list)
-                       | replace('{assets}', assets_list) }}
+                       | replace('{assets}', assets_list)
+                       | replace('{video_warning}', video_warning_text) }}
 
           - service: notify.send_message
             target:
@@ -528,7 +711,8 @@ action:
                                | replace('{album_url}', event_album_url)
                                | replace('{added_count}', filtered_added_count | string)
                                | replace('{people}', people_list)
-                               | replace('{assets}', assets_list) }}
+                               | replace('{assets}', assets_list)
+                               | replace('{video_warning}', video_warning_text) }}
 
                   - service: notify.send_message
                     target:
@@ -554,3 +738,161 @@ action:
                       entity_id: "{{ notify_targets }}"
                     data:
                       message: "{{ message }}"
+
+  # ---------------------------------------------------------------------------
+  # Send Media to Telegram (if enabled)
+  # ---------------------------------------------------------------------------
+  # Sends photos/videos as individual Telegram messages using telegram_bot integration.
+  # Note: Media is sent individually (HA doesn't support Telegram media groups).
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ send_telegram_media and
+                 telegram_chat_ids | length > 0 and
+                 assets_with_urls | length > 0 and
+                 (trigger.id == 'assets_added' or (trigger.id == 'changed' and filtered_added_count | int > 0)) }}
+        sequence:
+          - variables:
+              # Calculate how many media items to send
+              media_limit: >
+                {% if max_media_to_send > 0 %}
+                  {{ max_media_to_send }}
+                {% else %}
+                  {{ assets_with_urls | length }}
+                {% endif %}
+              media_to_send: "{{ assets_with_urls[:media_limit | int] }}"
+
+          # Debug logging for Telegram media
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ enable_debug_notifications }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "Immich Album Watcher - Telegram Media Debug"
+                      message: >
+                        **Telegram Configuration:**
+                        - Config Entry ID: {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else '(not set)' }}
+                        - Chat IDs: {{ telegram_chat_ids | join(', ') }}
+
+                        **Media to Send ({{ media_to_send | length }} items):**
+                        {% for asset in media_to_send %}
+                        {% set playback_url = asset.asset_playback_url | default('') %}
+                        {% set download_url = asset.asset_download_url | default('') %}
+                        {% set view_url = asset.asset_url | default('') %}
+                        {% if asset.asset_type == 'VIDEO' %}
+                          {% set used_url = playback_url if playback_url | length > 0 else (download_url if download_url | length > 0 else view_url) %}
+                        {% else %}
+                          {% set used_url = download_url if download_url | length > 0 else view_url %}
+                        {% endif %}
+                        - {{ asset.asset_type }}: {{ asset.asset_filename | default('unknown') }}
+                          Playback URL: {{ playback_url if playback_url | length > 0 else '(not available)' }}
+                          Download URL: {{ download_url if download_url | length > 0 else '(not available)' }}
+                          View URL: {{ view_url if view_url | length > 0 else '(not available)' }}
+                          **Using: {{ used_url if used_url | length > 0 else '(no URL!)' }}**
+                        {% endfor %}
+
+                        **Tip:** For videos, playback URLs (asset_playback_url) are preferred.
+                        For images, download URLs (asset_download_url) are preferred.
+                        View URLs may return 404.
+
+          # Build the notification message for Telegram
+          # Uses {video_warning} placeholder which is populated when videos are present
+          - variables:
+              telegram_message: >
+                {% set tpl = message_assets_added_template %}
+                {{ tpl | replace('{album_name}', event_album_name)
+                       | replace('{album_url}', event_album_url)
+                       | replace('{added_count}', filtered_added_count | string)
+                       | replace('{people}', people_list)
+                       | replace('{assets}', assets_list)
+                       | replace('{video_warning}', video_warning_text) }}
+
+          # Loop through each chat ID
+          - repeat:
+              for_each: "{{ telegram_chat_ids }}"
+              sequence:
+                - variables:
+                    current_chat_id: "{{ repeat.item }}"
+
+                # First send the text notification message to this chat
+                - service: telegram_bot.send_message
+                  response_variable: telegram_response
+                  data:
+                    target: "{{ current_chat_id }}"
+                    message: "{{ telegram_message }}"
+                    config_entry_id: >
+                      {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}
+
+                # Extract message ID for replies from response.chats[0].message_id
+                - variables:
+                    reply_to_message_id: "{{ telegram_response.chats[0].message_id | default(0) | int }}"
+
+                # Small delay to ensure message is processed before sending replies
+                - delay:
+                    milliseconds: 500
+
+                # Send each media item to this chat as reply to the notification
+                - repeat:
+                    count: "{{ media_to_send | length }}"
+                    sequence:
+                      - variables:
+                          current_asset: "{{ media_to_send[repeat.index - 1] }}"
+                          asset_type: "{{ current_asset.asset_type | default('IMAGE') }}"
+                          # URL preference: playback_url (videos) > download_url > asset_url
+                          asset_url: >
+                            {% set playback_url = current_asset.asset_playback_url | default('') %}
+                            {% set download_url = current_asset.asset_download_url | default('') %}
+                            {% set view_url = current_asset.asset_url | default('') %}
+                            {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
+                              {{ playback_url }}
+                            {% elif download_url | length > 0 %}
+                              {{ download_url }}
+                            {% else %}
+                              {{ view_url }}
+                            {% endif %}
+                          caption: >
+                            {{ telegram_caption_template
+                               | replace('{filename}', current_asset.asset_filename | default(''))
+                               | replace('{description}', current_asset.asset_description | default(''))
+                               | replace('{album_name}', event_album_name)
+                               | replace('{owner}', current_asset.asset_owner | default('')) }}
+
+                      # Send photo or video based on asset type
+                      - choose:
+                          # Send as photo for IMAGE assets
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ asset_type == 'IMAGE' }}"
+                            sequence:
+                              - service: telegram_bot.send_photo
+                                # Continue on error so one failed photo doesn't stop other media
+                                continue_on_error: true
+                                data:
+                                  target: "{{ current_chat_id }}"
+                                  url: "{{ asset_url }}"
+                                  caption: "{{ caption }}"
+                                  reply_to_message_id: >
+                                    {{ reply_to_message_id if reply_to_message_id > 0 else omit }}
+                                  config_entry_id: >
+                                    {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}
+
+                          # Send as video for VIDEO assets
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ asset_type == 'VIDEO' }}"
+                            sequence:
+                              - service: telegram_bot.send_video
+                                # Continue on error so one large video doesn't stop other media
+                                # Note: Telegram has 50 MB limit for videos sent via URL
+                                continue_on_error: true
+                                data:
+                                  target: "{{ current_chat_id }}"
+                                  url: "{{ asset_url }}"
+                                  caption: "{{ caption }}"
+                                  reply_to_message_id: >
+                                    {{ reply_to_message_id if reply_to_message_id > 0 else omit }}
+                                  config_entry_id: >
+                                    {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}

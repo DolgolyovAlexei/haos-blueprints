@@ -45,3 +45,7 @@ Created by Alexei Dolgolyov (`dolgolyov.alexei@gmail.com`)
 ## Support
 
 If you encounter any issues or have questions, please open an issue in this repository.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

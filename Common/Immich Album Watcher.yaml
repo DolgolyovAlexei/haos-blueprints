@@ -16,6 +16,7 @@
 #   - Optional: include detailed asset list with per-item formatting
 #   - Support for multiple change types (assets added, removed, changed)
 #   - Optional: send photos/videos as Telegram media attachments
+#   - Optional: periodic summary notifications with album list and share URLs
 #
 # Event Data from Immich:
 #   - `hub_name`:       Name of the Immich hub/instance that sent the event
@@ -95,6 +96,19 @@
 #   - `{album_name}`    - Name of the album
 #   - `{owner}`         - Owner display name
 #
+# Periodic Summary:
+#   Sends a summary notification of tracked albums at regular intervals.
+#   Configure Album Names and Album Share URLs (in matching order) to include
+#   album links in the summary.
+#
+#   Summary Message Template Variables:
+#   - `{albums}`        - Formatted list of albums (using album item template)
+#   - `{album_count}`   - Number of tracked albums
+#
+#   Album Item Template Variables:
+#   - `{album_name}`    - Name of the album
+#   - `{album_url}`     - Share URL for the album
+#
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
@@ -134,6 +148,17 @@ blueprint:
             List of album names to monitor for changes.
             Only albums matching these names will trigger notifications.
             Leave empty to track all albums.
+          default: []
+          selector:
+            text:
+              multiple: true
+
+        album_urls:
+          name: Album Share URLs
+          description: >
+            List of share URLs for each album (in the same order as Album Names).
+            Used for periodic summary notifications. Each URL corresponds to the
+            album name at the same position in the Album Names list.
           default: []
           selector:
             text:
@@ -376,6 +401,54 @@ blueprint:
               multiline: true
 
     # -------------------------------------------------------------------------
+    # Periodic Summary
+    # -------------------------------------------------------------------------
+    periodic_group:
+      name: "Periodic Summary"
+      description: "Send periodic notifications with a summary of tracked albums"
+      collapsed: true
+      input:
+        enable_periodic_summary:
+          name: Enable Periodic Summary
+          description: >
+            Send a summary notification of tracked albums at regular intervals.
+            Requires Album Names and Album Share URLs to be configured.
+          default: false
+          selector:
+            boolean:
+
+        periodic_interval_hours:
+          name: Summary Interval (Hours)
+          description: "How often to send the summary notification (in hours)"
+          default: 24
+          selector:
+            number:
+              min: 1
+              max: 168
+              unit_of_measurement: hours
+              mode: slider
+
+        periodic_summary_message:
+          name: Summary Message Template
+          description: >
+            Message template for the periodic summary.
+            Variables: `{albums}` (formatted list of albums), `{album_count}` (number of albums)
+          default: "📋 Tracked Albums Summary ({album_count} albums):{albums}"
+          selector:
+            text:
+              multiline: true
+
+        periodic_album_template:
+          name: Album Item Template
+          description: >
+            Template for each album in the summary list.
+            Variables: `{album_name}`, `{album_url}`
+          default: "\n  • {album_name}: {album_url}"
+          selector:
+            text:
+              multiline: true
+
+    # -------------------------------------------------------------------------
     # Debug
     # -------------------------------------------------------------------------
     debug:
@@ -414,6 +487,13 @@ trigger:
     event_type: immich_album_watcher_changed
     id: "changed"
 
+  # Periodic summary trigger (time pattern)
+  # Note: Uses template to dynamically set interval, but HA requires static value
+  # so we trigger every hour and check interval in conditions
+  - platform: time_pattern
+    hours: "/1"
+    id: "periodic_summary"
+
 # =============================================================================
 # VARIABLES
 # =============================================================================
@@ -423,6 +503,7 @@ variables:
   # ---------------------------------------------------------------------------
   hub_names: !input hub_names
   album_names: !input album_names
+  album_urls: !input album_urls
   notify_targets: !input notify_targets
   include_people: !input include_people
   include_asset_details: !input include_asset_details
@@ -441,6 +522,12 @@ variables:
   max_media_to_send: !input max_media_to_send
   telegram_caption_template: !input telegram_caption_template
   telegram_video_warning_template: !input telegram_video_warning
+
+  # Periodic Summary Settings
+  enable_periodic_summary: !input enable_periodic_summary
+  periodic_interval_hours: !input periodic_interval_hours
+  periodic_summary_message_template: !input periodic_summary_message
+  periodic_album_template: !input periodic_album_template
 
   # Parse chat IDs from notify entity friendly names (format: "Name (123456789)")
   # and combine with raw chat IDs
@@ -593,26 +680,91 @@ variables:
       {{ false }}
     {% endif %}
 
+  # ---------------------------------------------------------------------------
+  # Periodic Summary Variables
+  # ---------------------------------------------------------------------------
+  # Check if periodic summary should run (every N hours based on interval)
+  # Uses current hour modulo interval to determine if it's time to send
+  should_send_periodic_summary: >
+    {% if trigger.id == 'periodic_summary' and enable_periodic_summary %}
+      {% set current_hour = now().hour %}
+      {{ current_hour % (periodic_interval_hours | int) == 0 }}
+    {% else %}
+      {{ false }}
+    {% endif %}
+
+  # Format the albums list for periodic summary
+  periodic_albums_list: >
+    {% set ns = namespace(items = '') %}
+    {% for i in range(album_names | length) %}
+      {% set name = album_names[i] %}
+      {% set url = album_urls[i] | default('') if i < (album_urls | length) else '' %}
+      {% set item = periodic_album_template
+        | replace('{album_name}', name)
+        | replace('{album_url}', url) %}
+      {% set ns.items = ns.items ~ item %}
+    {% endfor %}
+    {{ ns.items }}
+
+  # Complete periodic summary message
+  periodic_summary_formatted: >
+    {{ periodic_summary_message_template
+       | replace('{albums}', periodic_albums_list)
+       | replace('{album_count}', album_names | length | string) }}
+
 # =============================================================================
 # CONDITIONS
 # =============================================================================
 condition:
-  # Only proceed if the hub is in our tracking list
+  # Allow through if:
+  # 1. Periodic summary trigger and should send periodic summary
+  # 2. Event trigger and passes all event-based checks
   - condition: template
-    value_template: "{{ is_hub_tracked }}"
-
-  # Only proceed if the album is in our tracking list
-  - condition: template
-    value_template: "{{ is_album_tracked }}"
-
-  # Only proceed if we should notify for this event type
-  - condition: template
-    value_template: "{{ should_notify }}"
+    value_template: >
+      {% if trigger.id == 'periodic_summary' %}
+        {{ should_send_periodic_summary }}
+      {% else %}
+        {{ is_hub_tracked and is_album_tracked and should_notify }}
+      {% endif %}
 
 # =============================================================================
 # ACTIONS
 # =============================================================================
 action:
+
+  # ---------------------------------------------------------------------------
+  # PERIODIC SUMMARY: Send summary of tracked albums (time-based trigger)
+  # ---------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'periodic_summary' }}"
+        sequence:
+          # Send periodic summary to notification targets
+          - service: notify.send_message
+            target:
+              entity_id: "{{ notify_targets }}"
+            data:
+              message: "{{ periodic_summary_formatted }}"
+
+          # Also send to Telegram if configured
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ send_telegram_media and telegram_chat_ids | length > 0 }}"
+                sequence:
+                  - repeat:
+                      for_each: "{{ telegram_chat_ids }}"
+                      sequence:
+                        - service: telegram_bot.send_message
+                          data:
+                            target: "{{ repeat.item }}"
+                            message: "{{ periodic_summary_formatted }}"
+                            config_entry_id: >
+                              {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}
+
+          # Stop here for periodic summary - don't continue to event-based actions
+          - stop: "Periodic summary sent"
 
   # ---------------------------------------------------------------------------
   # DEBUG: Log event data (enabled via Debug input section)

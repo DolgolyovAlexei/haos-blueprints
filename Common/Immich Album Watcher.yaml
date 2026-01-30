@@ -54,7 +54,8 @@
 #   - `{video_warning}`  - Warning about video size limits (Telegram only, empty otherwise)
 #
 # Asset Item Template Variables (for image/video templates):
-#   These variables can be used in the image and video asset templates:
+#   These variables can be used in the image and video asset templates.
+#   Also used for Telegram media captions.
 #   - `{filename}`      - Original filename of the asset
 #   - `{description}`   - User-provided description of the asset
 #   - `{type}`          - Asset type (IMAGE or VIDEO)
@@ -62,6 +63,7 @@
 #   - `{owner}`         - Owner display name
 #   - `{url}`           - Public URL to view the asset (empty if no shared link)
 #   - `{people}`        - People detected in this asset
+#   - `{album_name}`    - Name of the album
 #
 # Telegram Media Attachments:
 #   When enabled, photos/videos are sent as media attachments to Telegram
@@ -89,17 +91,13 @@
 #   - Telegram has a 50 MB file size limit for media sent via URL
 #     (large videos will fail with "Request Entity Too Large" error)
 #   - Optional video warning can be shown when videos are present
-#
-#   Caption Template Variables:
-#   - `{filename}`      - Original filename of the asset
-#   - `{description}`   - User-provided description of the asset
-#   - `{album_name}`    - Name of the album
-#   - `{owner}`         - Owner display name
+#   - Media captions use the Image/Video Asset Templates
 #
 # Periodic Summary:
 #   Sends a summary notification of tracked albums at regular intervals.
-#   Configure Album Names and Album Share URLs (in matching order) to include
-#   album links in the summary.
+#   Configure Album Names and Album Share URL Entities (in matching order) to
+#   include album links in the summary. URL entities can be sensors or input_text
+#   helpers containing the share URL for each album.
 #
 #   Summary Message Template Variables:
 #   - `{albums}`        - Formatted list of albums (using album item template)
@@ -153,15 +151,18 @@ blueprint:
             text:
               multiple: true
 
-        album_urls:
-          name: Album Share URLs
+        album_url_entities:
+          name: Album Share URL Entities
           description: >
-            List of share URLs for each album (in the same order as Album Names).
-            Used for periodic summary notifications. Each URL corresponds to the
-            album name at the same position in the Album Names list.
+            List of sensor or input_text entities containing share URLs for each album
+            (in the same order as Album Names). Used for periodic summary notifications.
+            Each entity's state should contain the album's share URL.
           default: []
           selector:
-            text:
+            entity:
+              domain:
+                - sensor
+                - input_text
               multiple: true
 
         track_assets_added:
@@ -274,8 +275,8 @@ blueprint:
         message_asset_image:
           name: "Image Asset Template"
           description: >
-            Template for IMAGE assets in the list.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`
+            Template for IMAGE assets in the list. Also used for Telegram media captions.
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`, `{album_name}`
           default: "\n  • 🖼️ {filename}"
           selector:
             text:
@@ -284,8 +285,8 @@ blueprint:
         message_asset_video:
           name: "Video Asset Template"
           description: >
-            Template for VIDEO assets in the list.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`
+            Template for VIDEO assets in the list. Also used for Telegram media captions.
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`, `{album_name}`
           default: "\n  • 🎬 {filename}"
           selector:
             text:
@@ -380,14 +381,20 @@ blueprint:
               max: 10
               mode: slider
 
-        telegram_caption_template:
-          name: Media Caption Template
+        telegram_media_delay:
+          name: Delay Between Media (ms)
           description: >
-            Caption for each media attachment.
-            Variables: `{filename}`, `{description}`, `{album_name}`, `{owner}`
-          default: "{filename}"
+            Delay in milliseconds between sending each media item.
+            Helps avoid rate limiting and spaces out media messages.
+            Set to 0 for no delay.
+          default: 500
           selector:
-            text:
+            number:
+              min: 0
+              max: 5000
+              step: 100
+              unit_of_measurement: ms
+              mode: slider
 
         telegram_video_warning:
           name: Video Warning Message
@@ -503,7 +510,7 @@ variables:
   # ---------------------------------------------------------------------------
   hub_names: !input hub_names
   album_names: !input album_names
-  album_urls: !input album_urls
+  album_url_entities: !input album_url_entities
   notify_targets: !input notify_targets
   include_people: !input include_people
   include_asset_details: !input include_asset_details
@@ -520,7 +527,7 @@ variables:
   telegram_notify_targets: !input telegram_notify_targets
   telegram_chat_ids_raw: !input telegram_chat_ids
   max_media_to_send: !input max_media_to_send
-  telegram_caption_template: !input telegram_caption_template
+  telegram_media_delay: !input telegram_media_delay
   telegram_video_warning_template: !input telegram_video_warning
 
   # Periodic Summary Settings
@@ -623,7 +630,8 @@ variables:
           | replace('{created}', asset.asset_created | default('Unknown'))
           | replace('{owner}', asset.asset_owner | default('Unknown'))
           | replace('{url}', asset.asset_url | default(''))
-          | replace('{people}', (asset.people | default([])) | join(', ')) %}
+          | replace('{people}', (asset.people | default([])) | join(', '))
+          | replace('{album_name}', event_album_name) %}
         {% set ns.items = ns.items ~ item %}
       {% endfor %}
       {% set more_count = filtered_assets | length - max_items %}
@@ -694,11 +702,13 @@ variables:
     {% endif %}
 
   # Format the albums list for periodic summary
+  # Reads URLs from entity states (sensor or input_text)
   periodic_albums_list: >
     {% set ns = namespace(items = '') %}
     {% for i in range(album_names | length) %}
       {% set name = album_names[i] %}
-      {% set url = album_urls[i] | default('') if i < (album_urls | length) else '' %}
+      {% set url_entity = album_url_entities[i] | default('') if i < (album_url_entities | length) else '' %}
+      {% set url = states(url_entity) | default('') if url_entity | length > 0 else '' %}
       {% set item = periodic_album_template
         | replace('{album_name}', name)
         | replace('{album_url}', url) %}
@@ -982,14 +992,19 @@ action:
                 - variables:
                     reply_to_message_id: "{{ telegram_response.chats[0].message_id | default(0) | int }}"
 
-                # Small delay to ensure message is processed before sending replies
-                - delay:
-                    milliseconds: 500
-
                 # Send each media item to this chat as reply to the notification
                 - repeat:
                     count: "{{ media_to_send | length }}"
                     sequence:
+                      # Delay before each media item (acts as delay after notification for first item)
+                      - choose:
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ telegram_media_delay > 0 }}"
+                            sequence:
+                              - delay:
+                                  milliseconds: "{{ telegram_media_delay }}"
+
                       - variables:
                           current_asset: "{{ media_to_send[repeat.index - 1] }}"
                           asset_type: "{{ current_asset.asset_type | default('IMAGE') }}"
@@ -1005,12 +1020,17 @@ action:
                             {% else %}
                               {{ view_url }}
                             {% endif %}
+                          # Use image/video asset templates for captions
                           caption: >
-                            {{ telegram_caption_template
-                               | replace('{filename}', current_asset.asset_filename | default(''))
-                               | replace('{description}', current_asset.asset_description | default(''))
-                               | replace('{album_name}', event_album_name)
-                               | replace('{owner}', current_asset.asset_owner | default('')) }}
+                            {% set tpl = message_asset_video_template if asset_type == 'VIDEO' else message_asset_image_template %}
+                            {{ tpl | replace('{filename}', current_asset.asset_filename | default(''))
+                                   | replace('{description}', current_asset.asset_description | default(''))
+                                   | replace('{type}', current_asset.asset_type | default(''))
+                                   | replace('{created}', current_asset.asset_created | default(''))
+                                   | replace('{owner}', current_asset.asset_owner | default(''))
+                                   | replace('{url}', current_asset.asset_url | default(''))
+                                   | replace('{people}', (current_asset.people | default([])) | join(', '))
+                                   | replace('{album_name}', event_album_name) }}
 
                       # Send photo or video based on asset type
                       - choose:

@@ -437,6 +437,20 @@ blueprint:
               unit_of_measurement: hours
               mode: slider
 
+        periodic_start_hour:
+          name: Summary Start Hour
+          description: >
+            Hour of day (0-23) when the first summary should be sent.
+            Subsequent summaries are sent at this hour plus the interval.
+            Example: Start hour 12 with 24h interval = daily at 12:00.
+          default: 12
+          selector:
+            number:
+              min: 0
+              max: 23
+              unit_of_measurement: hour
+              mode: slider
+
         periodic_summary_message:
           name: Summary Message Template
           description: >
@@ -546,6 +560,7 @@ variables:
   # Periodic Summary Settings
   enable_periodic_summary: !input enable_periodic_summary
   periodic_interval_hours: !input periodic_interval_hours
+  periodic_start_hour: !input periodic_start_hour
   periodic_summary_message_template: !input periodic_summary_message
   periodic_album_template: !input periodic_album_template
 
@@ -704,12 +719,16 @@ variables:
   # ---------------------------------------------------------------------------
   # Periodic Summary Variables
   # ---------------------------------------------------------------------------
-  # Check if periodic summary should run (every N hours based on interval)
-  # Uses current hour modulo interval to determine if it's time to send
+  # Check if periodic summary should run (every N hours starting from start_hour)
+  # Formula: (current_hour - start_hour) % interval == 0
+  # Example: start_hour=12, interval=24 → sends at 12:00 daily
+  # Example: start_hour=9, interval=12 → sends at 09:00 and 21:00
   should_send_periodic_summary: >
     {% if trigger.id == 'periodic_summary' and enable_periodic_summary %}
       {% set current_hour = now().hour %}
-      {{ current_hour % (periodic_interval_hours | int) == 0 }}
+      {% set start = periodic_start_hour | int %}
+      {% set interval = periodic_interval_hours | int %}
+      {{ (current_hour - start) % interval == 0 }}
     {% else %}
       {{ false }}
     {% endif %}

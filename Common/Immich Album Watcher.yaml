@@ -95,9 +95,8 @@
 #
 # Periodic Summary:
 #   Sends a summary notification of tracked albums at regular intervals.
-#   Configure Album Names and Album Share URL Entities (in matching order) to
-#   include album links in the summary. URL entities can be sensors or input_text
-#   helpers containing the share URL for each album.
+#   Album names and share URLs are automatically read from the Album ID Entity's
+#   `album_name` and `share_url` attributes (if available).
 #
 #   Summary Message Template Variables:
 #   - `{albums}`        - Formatted list of albums (using album item template)
@@ -140,35 +139,15 @@ blueprint:
             text:
               multiple: true
 
-        album_ids:
-          name: Album IDs to Track
+        album_id_entities:
+          name: Album ID Entities
           description: >
-            List of album IDs to monitor for changes.
+            List of sensor or input_text entities containing album IDs to monitor.
             Only albums matching these IDs will trigger notifications.
             Leave empty to track all albums.
             Album IDs are stable and won't change if albums get renamed.
-          default: []
-          selector:
-            text:
-              multiple: true
-
-        album_names:
-          name: Album Display Names
-          description: >
-            List of album display names (in the same order as Album IDs).
-            Used for periodic summary notifications to show human-readable album names.
-            If not specified, album names from events will be used.
-          default: []
-          selector:
-            text:
-              multiple: true
-
-        album_url_entities:
-          name: Album Share URL Entities
-          description: >
-            List of sensor or input_text entities containing share URLs for each album
-            (in the same order as Album Names). Used for periodic summary notifications.
-            Each entity's state should contain the album's share URL.
+            Album names and share URLs are automatically read from the entity's
+            `album_name` and `share_url` attributes for periodic summary notifications.
           default: []
           selector:
             entity:
@@ -330,7 +309,9 @@ blueprint:
           description: >
             Format for displaying asset creation dates.
             Uses Python strftime format codes (e.g., %Y-%m-%d %H:%M).
-          default: "%d %b %Y, %H:%M"
+            Note: Month names (%b, %B) use system locale (typically English).
+            Use numeric format (%m) for locale-independent dates.
+          default: "%d.%m.%Y, %H:%M"
           selector:
             text:
 
@@ -530,9 +511,19 @@ variables:
   # Input Variables
   # ---------------------------------------------------------------------------
   hub_names: !input hub_names
-  album_ids: !input album_ids
-  album_names: !input album_names
-  album_url_entities: !input album_url_entities
+  album_id_entities: !input album_id_entities
+
+  # Read album IDs from entity states
+  album_ids: >
+    {% set ns = namespace(ids = []) %}
+    {% for entity_id in album_id_entities %}
+      {% set value = states(entity_id) | default('') | trim %}
+      {% if value | length > 0 and value not in ['unknown', 'unavailable'] %}
+        {% set ns.ids = ns.ids + [value] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.ids }}
+
   notify_targets: !input notify_targets
   include_people: !input include_people
   include_asset_details: !input include_asset_details
@@ -647,7 +638,8 @@ variables:
       {% for asset in assets_to_show %}
         {% set asset_template = message_asset_video_template if asset.asset_type == 'VIDEO' else message_asset_image_template %}
         {% set raw_date = asset.asset_created | default('') %}
-        {% set formatted_date = raw_date | as_datetime | strftime(date_format) if raw_date | length > 0 else '' %}
+        {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
+        {% set formatted_date = dt.strftime(date_format) if dt else '' %}
         {% set item = asset_template
           | replace('{filename}', asset.asset_filename | default('Unknown'))
           | replace('{description}', asset.asset_description | default(''))
@@ -723,19 +715,23 @@ variables:
     {% endif %}
 
   # Format the albums list for periodic summary
-  # Reads URLs from entity states (sensor or input_text)
+  # Reads album name and share URL from album ID entity's attributes
   periodic_albums_list: >
     {% set ns = namespace(items = '') %}
-    {% for i in range(album_ids | length) %}
-      {% set id = album_ids[i] %}
-      {% set name = album_names[i] if i < (album_names | length) else id %}
-      {% set url_entity = album_url_entities[i] | default('') if i < (album_url_entities | length) else '' %}
-      {% set url = states(url_entity) | default('') if url_entity | length > 0 else '' %}
-      {% set item = periodic_album_template
-        | replace('{album_name}', name)
-        | replace('{album_id}', id)
-        | replace('{album_url}', url) %}
-      {% set ns.items = ns.items ~ item %}
+    {% for i in range(album_id_entities | length) %}
+      {% set entity_id = album_id_entities[i] %}
+      {% set id = states(entity_id) | default('') %}
+      {% if id | length > 0 and id not in ['unknown', 'unavailable'] %}
+        {% set name_attr = state_attr(entity_id, 'album_name') %}
+        {% set name = name_attr if name_attr not in [none, '', 'unknown', 'unavailable'] else id %}
+        {% set url_attr = state_attr(entity_id, 'share_url') %}
+        {% set url = url_attr if url_attr not in [none, 'unknown', 'unavailable'] else '' %}
+        {% set item = periodic_album_template
+          | replace('{album_name}', name)
+          | replace('{album_id}', id)
+          | replace('{album_url}', url) %}
+        {% set ns.items = ns.items ~ item %}
+      {% endif %}
     {% endfor %}
     {{ ns.items }}
 
@@ -1047,7 +1043,8 @@ action:
                           caption: >
                             {% set tpl = message_asset_video_template if asset_type == 'VIDEO' else message_asset_image_template %}
                             {% set raw_date = current_asset.asset_created | default('') %}
-                            {% set formatted_date = raw_date | as_datetime | strftime(date_format) if raw_date | length > 0 else '' %}
+                            {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
+                            {% set formatted_date = dt.strftime(date_format) if dt else '' %}
                             {{ tpl | replace('{filename}', current_asset.asset_filename | default(''))
                                    | replace('{description}', current_asset.asset_description | default(''))
                                    | replace('{type}', current_asset.asset_type | default(''))

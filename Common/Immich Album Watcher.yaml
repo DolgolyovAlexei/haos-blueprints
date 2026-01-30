@@ -311,7 +311,7 @@ blueprint:
             Uses Python strftime format codes (e.g., %Y-%m-%d %H:%M).
             Note: Month names (%b, %B) use system locale (typically English).
             Use numeric format (%m) for locale-independent dates.
-          default: "%d.%m.%Y, %H:%M"
+          default: "%d.%m.%Y, %H:%M UTC"
           selector:
             text:
 

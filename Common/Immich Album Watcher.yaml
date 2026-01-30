@@ -409,6 +409,15 @@ blueprint:
             text:
               multiline: true
 
+        telegram_disable_url_preview:
+          name: Disable URL Preview
+          description: >
+            Disable link previews in Telegram messages.
+            When enabled, URLs in the message won't show a preview card.
+          default: false
+          selector:
+            boolean:
+
     # -------------------------------------------------------------------------
     # Periodic Summary
     # -------------------------------------------------------------------------
@@ -556,6 +565,7 @@ variables:
   max_media_to_send: !input max_media_to_send
   telegram_media_delay: !input telegram_media_delay
   telegram_video_warning_template: !input telegram_video_warning
+  telegram_disable_url_preview: !input telegram_disable_url_preview
 
   # Periodic Summary Settings
   enable_periodic_summary: !input enable_periodic_summary
@@ -808,6 +818,7 @@ action:
                           data:
                             target: "{{ repeat.item }}"
                             message: "{{ periodic_summary_formatted }}"
+                            disable_web_page_preview: "{{ telegram_disable_url_preview }}"
                             config_entry_id: >
                               {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}
 
@@ -1023,6 +1034,7 @@ action:
                   data:
                     target: "{{ current_chat_id }}"
                     message: "{{ telegram_message }}"
+                    disable_web_page_preview: "{{ telegram_disable_url_preview }}"
                     config_entry_id: >
                       {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}
 

@@ -83,8 +83,23 @@
 #   Behavior:
 #   - First sends a text notification message to each Telegram chat
 #   - Then sends photos/videos as replies to that notification message
-#   - Media is sent as individual messages (Home Assistant doesn't support
-#     Telegram media groups / albums)
+#   - By default, media is sent as individual messages
+#   - Optional: Send as media group (album) using Telegram API directly
+#
+#   Media Group Mode (Album):
+#   - Sends multiple photos/videos grouped together as a Telegram album
+#   - Requires additional setup: add rest_command to configuration.yaml:
+#
+#     rest_command:
+#       immich_album_watcher_telegram_send_media_group:
+#         url: "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMediaGroup"
+#         method: POST
+#         content_type: "application/json"
+#         payload: '{"chat_id": {{ chat_id }}, "media": {{ media | to_json }}, "reply_to_message_id": {{ reply_to_message_id }}}'
+#
+#   - Replace <YOUR_BOT_TOKEN> with your actual bot token from BotFather
+#   - TIP: Use secrets.yaml for the URL: url: !secret telegram_bot_send_media_group_url
+#   - Media groups support 2-10 items (Telegram limit)
 #
 #   Limitations:
 #   - Only assets with valid public URLs will be sent
@@ -418,6 +433,26 @@ blueprint:
           selector:
             boolean:
 
+        telegram_send_as_media_group:
+          name: Send as Media Group (Album)
+          description: >
+            Send multiple photos/videos as a grouped album instead of individual messages.
+            REQUIRES additional setup - add this to your configuration.yaml:
+
+            rest_command:
+              immich_album_watcher_telegram_send_media_group:
+                url: "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMediaGroup"
+                method: POST
+                content_type: "application/json"
+                payload: '{"chat_id": {{ chat_id }}, "media": {{ media | to_json }}, "reply_to_message_id": {{ reply_to_message_id }}}'
+
+            Replace <YOUR_BOT_TOKEN> with your actual bot token from BotFather.
+            TIP: Store the full URL in secrets.yaml and use: url: !secret telegram_bot_send_media_group_url
+            Telegram limits media groups to 2-10 items.
+          default: false
+          selector:
+            boolean:
+
     # -------------------------------------------------------------------------
     # Periodic Summary
     # -------------------------------------------------------------------------
@@ -566,6 +601,7 @@ variables:
   telegram_media_delay: !input telegram_media_delay
   telegram_video_warning_template: !input telegram_video_warning
   telegram_disable_url_preview: !input telegram_disable_url_preview
+  telegram_send_as_media_group: !input telegram_send_as_media_group
 
   # Periodic Summary Settings
   enable_periodic_summary: !input enable_periodic_summary
@@ -953,8 +989,10 @@ action:
   # ---------------------------------------------------------------------------
   # Send Media to Telegram (if enabled)
   # ---------------------------------------------------------------------------
-  # Sends photos/videos as individual Telegram messages using telegram_bot integration.
-  # Note: Media is sent individually (HA doesn't support Telegram media groups).
+  # Sends photos/videos to Telegram using telegram_bot integration.
+  # Two modes available:
+  # 1. Individual messages (default) - uses telegram_bot.send_photo/send_video
+  # 2. Media group (album) - uses rest_command to call Telegram API directly
   - choose:
       - conditions:
           - condition: template
@@ -1009,6 +1047,10 @@ action:
                         For images, download URLs (asset_download_url) are preferred.
                         View URLs may return 404.
 
+                        **Media Group Mode:**
+                        - Enabled: {{ telegram_send_as_media_group }}
+                        - Will use media group: {{ telegram_send_as_media_group and media_to_send | length >= 2 }}
+
           # Build the notification message for Telegram
           # Uses {video_warning} placeholder which is populated when videos are present
           - variables:
@@ -1042,82 +1084,132 @@ action:
                 - variables:
                     reply_to_message_id: "{{ telegram_response.chats[0].message_id | default(0) | int }}"
 
-                # Send each media item to this chat as reply to the notification
-                - repeat:
-                    count: "{{ media_to_send | length }}"
-                    sequence:
-                      # Delay before each media item (acts as delay after notification for first item)
-                      - choose:
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ telegram_media_delay > 0 }}"
-                            sequence:
-                              - delay:
-                                  milliseconds: "{{ telegram_media_delay }}"
+                # Choose between media group (album) or individual messages
+                - choose:
+                    # ---------------------------------------------------------
+                    # OPTION 1: Send as Media Group (Album) via REST API
+                    # ---------------------------------------------------------
+                    # Requires: rest_command.immich_album_watcher_telegram_send_media_group
+                    # Telegram limits: 2-10 media items per group
+                    - conditions:
+                        - condition: template
+                          value_template: >
+                            {{ telegram_send_as_media_group and
+                               media_to_send | length >= 2 }}
+                      sequence:
+                        # Build the media array for Telegram API
+                        - variables:
+                            # Build JSON array for Telegram sendMediaGroup API
+                            # Limit to 10 items (Telegram max for media groups)
+                            media_group_json: >
+                              {% set ns = namespace(items = []) %}
+                              {% set items_to_send = media_to_send[:10] %}
+                              {% for asset in items_to_send %}
+                                {% set asset_type = asset.asset_type | default('IMAGE') %}
+                                {% set playback_url = asset.asset_playback_url | default('') %}
+                                {% set download_url = asset.asset_download_url | default('') %}
+                                {% set view_url = asset.asset_url | default('') %}
+                                {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
+                                  {% set media_url = playback_url %}
+                                {% elif download_url | length > 0 %}
+                                  {% set media_url = download_url %}
+                                {% else %}
+                                  {% set media_url = view_url %}
+                                {% endif %}
+                                {% set media_type = 'video' if asset_type == 'VIDEO' else 'photo' %}
+                                {% set item = {'type': media_type, 'media': media_url} %}
+                                {% set ns.items = ns.items + [item] %}
+                              {% endfor %}
+                              {{ ns.items | to_json }}
 
-                      - variables:
-                          current_asset: "{{ media_to_send[repeat.index - 1] }}"
-                          asset_type: "{{ current_asset.asset_type | default('IMAGE') }}"
-                          # URL preference: playback_url (videos) > download_url > asset_url
-                          asset_url: >
-                            {% set playback_url = current_asset.asset_playback_url | default('') %}
-                            {% set download_url = current_asset.asset_download_url | default('') %}
-                            {% set view_url = current_asset.asset_url | default('') %}
-                            {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
-                              {{ playback_url }}
-                            {% elif download_url | length > 0 %}
-                              {{ download_url }}
-                            {% else %}
-                              {{ view_url }}
-                            {% endif %}
-                          # Use image/video asset templates for captions
-                          caption: >
-                            {% set tpl = message_asset_video_template if asset_type == 'VIDEO' else message_asset_image_template %}
-                            {% set raw_date = current_asset.asset_created | default('') %}
-                            {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
-                            {% set formatted_date = dt.strftime(date_format) if dt else '' %}
-                            {{ tpl | replace('{filename}', current_asset.asset_filename | default(''))
-                                   | replace('{description}', current_asset.asset_description | default(''))
-                                   | replace('{type}', current_asset.asset_type | default(''))
-                                   | replace('{created}', formatted_date)
-                                   | replace('{owner}', current_asset.asset_owner | default(''))
-                                   | replace('{url}', current_asset.asset_url | default(''))
-                                   | replace('{people}', (current_asset.people | default([])) | join(', '))
-                                   | replace('{album_name}', event_album_name) }}
+                        # Call rest_command to send media group
+                        - service: rest_command.immich_album_watcher_telegram_send_media_group
+                          continue_on_error: true
+                          data:
+                            chat_id: "{{ current_chat_id }}"
+                            media: "{{ media_group_json }}"
+                            reply_to_message_id: "{{ reply_to_message_id if reply_to_message_id > 0 else 0 }}"
 
-                      # Send photo or video based on asset type
-                      - choose:
-                          # Send as photo for IMAGE assets
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ asset_type == 'IMAGE' }}"
-                            sequence:
-                              - service: telegram_bot.send_photo
-                                # Continue on error so one failed photo doesn't stop other media
-                                continue_on_error: true
-                                data:
-                                  target: "{{ current_chat_id }}"
-                                  url: "{{ asset_url }}"
-                                  caption: "{{ caption }}"
-                                  reply_to_message_id: >
-                                    {{ reply_to_message_id if reply_to_message_id > 0 else omit }}
-                                  config_entry_id: >
-                                    {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}
+                  # ---------------------------------------------------------
+                  # OPTION 2: Send as Individual Messages (Default)
+                  # ---------------------------------------------------------
+                  default:
+                    # Send each media item to this chat as reply to the notification
+                    - repeat:
+                        count: "{{ media_to_send | length }}"
+                        sequence:
+                          # Delay before each media item (acts as delay after notification for first item)
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ telegram_media_delay > 0 }}"
+                                sequence:
+                                  - delay:
+                                      milliseconds: "{{ telegram_media_delay }}"
 
-                          # Send as video for VIDEO assets
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ asset_type == 'VIDEO' }}"
-                            sequence:
-                              - service: telegram_bot.send_video
-                                # Continue on error so one large video doesn't stop other media
-                                # Note: Telegram has 50 MB limit for videos sent via URL
-                                continue_on_error: true
-                                data:
-                                  target: "{{ current_chat_id }}"
-                                  url: "{{ asset_url }}"
-                                  caption: "{{ caption }}"
-                                  reply_to_message_id: >
-                                    {{ reply_to_message_id if reply_to_message_id > 0 else omit }}
-                                  config_entry_id: >
-                                    {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}
+                          - variables:
+                              current_asset: "{{ media_to_send[repeat.index - 1] }}"
+                              asset_type: "{{ current_asset.asset_type | default('IMAGE') }}"
+                              # URL preference: playback_url (videos) > download_url > asset_url
+                              asset_url: >
+                                {% set playback_url = current_asset.asset_playback_url | default('') %}
+                                {% set download_url = current_asset.asset_download_url | default('') %}
+                                {% set view_url = current_asset.asset_url | default('') %}
+                                {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
+                                  {{ playback_url }}
+                                {% elif download_url | length > 0 %}
+                                  {{ download_url }}
+                                {% else %}
+                                  {{ view_url }}
+                                {% endif %}
+                              # Use image/video asset templates for captions
+                              caption: >
+                                {% set tpl = message_asset_video_template if asset_type == 'VIDEO' else message_asset_image_template %}
+                                {% set raw_date = current_asset.asset_created | default('') %}
+                                {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
+                                {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+                                {{ tpl | replace('{filename}', current_asset.asset_filename | default(''))
+                                       | replace('{description}', current_asset.asset_description | default(''))
+                                       | replace('{type}', current_asset.asset_type | default(''))
+                                       | replace('{created}', formatted_date)
+                                       | replace('{owner}', current_asset.asset_owner | default(''))
+                                       | replace('{url}', current_asset.asset_url | default(''))
+                                       | replace('{people}', (current_asset.people | default([])) | join(', '))
+                                       | replace('{album_name}', event_album_name) }}
+
+                          # Send photo or video based on asset type
+                          - choose:
+                              # Send as photo for IMAGE assets
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ asset_type == 'IMAGE' }}"
+                                sequence:
+                                  - service: telegram_bot.send_photo
+                                    # Continue on error so one failed photo doesn't stop other media
+                                    continue_on_error: true
+                                    data:
+                                      target: "{{ current_chat_id }}"
+                                      url: "{{ asset_url }}"
+                                      caption: "{{ caption }}"
+                                      reply_to_message_id: >
+                                        {{ reply_to_message_id if reply_to_message_id > 0 else omit }}
+                                      config_entry_id: >
+                                        {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}
+
+                              # Send as video for VIDEO assets
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ asset_type == 'VIDEO' }}"
+                                sequence:
+                                  - service: telegram_bot.send_video
+                                    # Continue on error so one large video doesn't stop other media
+                                    # Note: Telegram has 50 MB limit for videos sent via URL
+                                    continue_on_error: true
+                                    data:
+                                      target: "{{ current_chat_id }}"
+                                      url: "{{ asset_url }}"
+                                      caption: "{{ caption }}"
+                                      reply_to_message_id: >
+                                        {{ reply_to_message_id if reply_to_message_id > 0 else omit }}
+                                      config_entry_id: >
+                                        {{ telegram_config_entry_id if telegram_config_entry_id | length > 0 else omit }}

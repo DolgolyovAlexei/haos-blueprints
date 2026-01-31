@@ -71,6 +71,9 @@ Each item in `added_assets` contains:
 | `playback_url` | Video playback URL (for VIDEO assets only, if shared link exists) |
 | `photo_url` | Photo preview URL (for IMAGE assets only, if shared link exists) |
 | `people` | List of people detected in this specific asset |
+| `city` | City name from reverse geocoding (if available) |
+| `state` | State/region name from reverse geocoding (if available) |
+| `country` | Country name from reverse geocoding (if available) |
 
 ## Message Template Variables
 
@@ -86,6 +89,7 @@ All message templates support these placeholder variables (use single braces):
 | `{assets}` | Formatted list of added assets (using asset item template) |
 | `{video_warning}` | Warning about video size limits (Telegram only, empty otherwise) |
 | `{common_date}` | Common date formatted with template if all assets share same date, empty otherwise |
+| `{common_location}` | Common location formatted with template if all assets share same location (requires city, state, country), empty otherwise |
 
 ## Asset Item Template Variables
 
@@ -107,6 +111,11 @@ These variables can be used in the image and video asset templates. Also used fo
 | `{album_name}` | Name of the album |
 | `{is_favorite}` | Favorite indicator (using template) if asset is favorite, empty otherwise |
 | `{rating}` | User rating (1-5) or empty if not rated |
+| `{location}` | Formatted location string (using location format template), empty if location data incomplete |
+| `{location_if_unique}` | Location formatted with template if locations differ between assets, empty if all same or data incomplete |
+| `{city}` | City name from reverse geocoding, empty if not available |
+| `{state}` | State/region name from reverse geocoding, empty if not available |
+| `{country}` | Country name from reverse geocoding, empty if not available |
 
 ## Telegram Media Attachments
 

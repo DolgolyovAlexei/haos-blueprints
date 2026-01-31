@@ -94,12 +94,14 @@
 #       immich_album_watcher_telegram_send_media_group:
 #         url: "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMediaGroup"
 #         method: POST
+#         timeout: 30
 #         content_type: "application/json"
 #         payload: '{"chat_id": {{ chat_id }}, "media": {{ media | to_json }}, "reply_to_message_id": {{ reply_to_message_id }}}'
 #
 #   - Replace <YOUR_BOT_TOKEN> with your actual bot token from BotFather
 #   - TIP: Use secrets.yaml for the URL: url: !secret telegram_bot_send_media_group_url
 #   - Media groups support 2-10 items (Telegram limit)
+#   - IMPORTANT: The timeout: 30 prevents HA from hanging if Telegram is slow
 #
 #   Limitations:
 #   - Only assets with valid public URLs will be sent
@@ -460,11 +462,13 @@ blueprint:
               immich_album_watcher_telegram_send_media_group:
                 url: "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMediaGroup"
                 method: POST
+                timeout: 30
                 content_type: "application/json"
                 payload: '{"chat_id": {{ chat_id }}, "media": {{ media | to_json }}, "reply_to_message_id": {{ reply_to_message_id }}}'
 
             Replace <YOUR_BOT_TOKEN> with your actual bot token from BotFather.
             TIP: Store the full URL in secrets.yaml and use: url: !secret telegram_bot_send_media_group_url
+            IMPORTANT: timeout: 30 prevents HA from hanging if Telegram is slow.
             Telegram limits media groups to 2-10 items.
           default: false
           selector:

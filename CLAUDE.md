@@ -19,3 +19,7 @@ After any change to repository content (blueprints, documentation, or other file
 - **Major** (X.0.0) - Breaking changes or major new features
 - **Minor** (0.X.0) - New features, enhancements, or significant improvements
 - **Patch** (0.0.X) - Bug fixes, typos, small tweaks, or documentation updates
+
+## Repository Structure
+
+When any blueprint file is moved ask if I need to update the link somewhere else.

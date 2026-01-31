@@ -44,19 +44,20 @@
 #   - `album_name`:     Album name that was deleted
 #
 # Added Assets Fields (each item in `added_assets`):
-#   - `id`:                 Unique asset ID
-#   - `asset_type`:         Type of asset (IMAGE or VIDEO)
-#   - `asset_filename`:     Original filename of the asset
-#   - `asset_description`:  User-provided description of the asset
-#   - `asset_created`:      Date/time when the asset was originally created
-#   - `asset_owner`:        Display name of the user who owns the asset
-#   - `asset_owner_id`:     Unique ID of the user who owns the asset
-#   - `asset_url`:          Public URL to view the asset (only if album has shared link)
-#   - `asset_download_url`: Direct download URL for the asset (preferred for Telegram images)
-#   - `asset_playback_url`: Playback/streaming URL for videos (preferred for Telegram videos)
-#   - `people`:             List of people detected in this specific asset
-#   - `asset_is_favorite`:  Whether the asset is marked as favorite (true or false)
-#   - `asset_rating`:       User rating of the asset (1-5 stars, or null if not rated)
+#   - `id`:           Unique asset ID
+#   - `type`:         Type of asset (IMAGE or VIDEO)
+#   - `filename`:     Original filename of the asset
+#   - `created_at`:   Date/time when the asset was originally created
+#   - `owner`:        Display name of the user who owns the asset
+#   - `owner_id`:     Unique ID of the user who owns the asset
+#   - `description`:  Description/caption (user-added in Immich, or EXIF fallback)
+#   - `is_favorite`:  Whether the asset is marked as favorite (true or false)
+#   - `rating`:       User rating of the asset (1-5 stars, or null if not rated)
+#   - `url`:          Public URL to view the asset (only if album has shared link)
+#   - `download_url`: Direct download URL for the original file (if shared link exists)
+#   - `playback_url`: Video playback URL (for VIDEO assets only, if shared link exists)
+#   - `photo_url`:    Photo preview URL (for IMAGE assets only, if shared link exists)
+#   - `people`:       List of people detected in this specific asset
 #
 # Message Template Variables:
 #   All message templates support these placeholder variables (use single braces):
@@ -73,12 +74,15 @@
 #   These variables can be used in the image and video asset templates.
 #   Also used for Telegram media captions.
 #   - `{filename}`          - Original filename of the asset
-#   - `{description}`       - User-provided description of the asset
+#   - `{description}`       - Description/caption (user-added in Immich, or EXIF fallback)
 #   - `{type}`              - Asset type (IMAGE or VIDEO)
 #   - `{created}`           - Creation date/time (always shown)
 #   - `{created_if_unique}` - Creation date/time formatted with template if dates differ, empty if all same
 #   - `{owner}`             - Owner display name
 #   - `{url}`               - Public URL to view the asset (empty if no shared link)
+#   - `{download_url}`      - Direct download URL for the original file
+#   - `{photo_url}`         - Photo preview URL (for IMAGE assets only)
+#   - `{playback_url}`      - Video playback URL (for VIDEO assets only)
 #   - `{people}`            - People detected in this asset
 #   - `{album_name}`        - Name of the album
 #   - `{is_favorite}`       - Favorite indicator (using template) if asset is favorite, empty otherwise
@@ -325,7 +329,7 @@ blueprint:
           name: "Image Asset Template"
           description: >
             Template for IMAGE assets in the list. Also used for Telegram media captions.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{download_url}`, `{photo_url}`, `{playback_url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`
           default: "\n  • 🖼️ {filename}"
           selector:
             text:
@@ -335,7 +339,7 @@ blueprint:
           name: "Video Asset Template"
           description: >
             Template for VIDEO assets in the list. Also used for Telegram media captions.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{download_url}`, `{photo_url}`, `{playback_url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`
           default: "\n  • 🎬 {filename}"
           selector:
             text:
@@ -509,16 +513,6 @@ blueprint:
           selector:
             boolean:
 
-        telegram_send_large_photos_as_documents:
-          name: Send Large Photos as Documents
-          description: >
-            Send large photos as documents instead of compressed images.
-            This preserves the original quality but may result in larger file sizes.
-            Only applies to photos sent as Telegram media attachments.
-          default: false
-          selector:
-            boolean:
-
     # -------------------------------------------------------------------------
     # Periodic Summary
     # -------------------------------------------------------------------------
@@ -684,7 +678,6 @@ variables:
   telegram_media_delay: !input telegram_media_delay
   telegram_video_warning_template: !input telegram_video_warning
   telegram_disable_url_preview: !input telegram_disable_url_preview
-  telegram_send_large_photos_as_documents: !input telegram_send_large_photos_as_documents
 
   # Periodic Summary Settings
   enable_periodic_summary: !input enable_periodic_summary
@@ -773,7 +766,7 @@ variables:
   filtered_assets: >
     {% set ns = namespace(assets = []) %}
     {% for asset in event_added_assets %}
-      {% if (asset.asset_type == 'IMAGE' and track_images) or (asset.asset_type == 'VIDEO' and track_videos) %}
+      {% if (asset.type == 'IMAGE' and track_images) or (asset.type == 'VIDEO' and track_videos) %}
         {% set ns.assets = ns.assets + [asset] %}
       {% endif %}
     {% endfor %}
@@ -786,7 +779,7 @@ variables:
   unique_dates: >
     {% set ns = namespace(dates = []) %}
     {% for asset in filtered_assets %}
-      {% set raw_date = asset.asset_created | default('') %}
+      {% set raw_date = asset.created_at | default('') %}
       {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
       {% set formatted_date = dt.strftime(date_format) if dt else '' %}
       {% if formatted_date | length > 0 and formatted_date not in ns.dates %}
@@ -813,21 +806,24 @@ variables:
       {% set max_items = max_assets_to_show if max_assets_to_show > 0 else filtered_assets | length %}
       {% set assets_to_show = filtered_assets[:max_items] %}
       {% for asset in assets_to_show %}
-        {% set asset_template = message_asset_video_template if asset.asset_type == 'VIDEO' else message_asset_image_template %}
-        {% set raw_date = asset.asset_created | default('') %}
+        {% set asset_template = message_asset_video_template if asset.type == 'VIDEO' else message_asset_image_template %}
+        {% set raw_date = asset.created_at | default('') %}
         {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
         {% set formatted_date = dt.strftime(date_format) if dt else '' %}
         {% set created_if_unique = '' if unique_dates | length == 1 else (date_if_unique_template | replace('{date}', formatted_date)) %}
-        {% set is_favorite = favorite_indicator_template if asset.asset_is_favorite | default(false) else '' %}
-        {% set rating = asset.asset_rating | default('') | string if asset.asset_rating not in [none, ''] else '' %}
+        {% set is_favorite = favorite_indicator_template if asset.is_favorite | default(false) else '' %}
+        {% set rating = asset.rating | default('') | string if asset.rating not in [none, ''] else '' %}
         {% set item = asset_template
-          | replace('{filename}', asset.asset_filename | default('Unknown'))
-          | replace('{description}', asset.asset_description | default(''))
-          | replace('{type}', asset.asset_type | default('Unknown'))
+          | replace('{filename}', asset.filename | default('Unknown'))
+          | replace('{description}', asset.description | default(''))
+          | replace('{type}', asset.type | default('Unknown'))
           | replace('{created}', formatted_date)
           | replace('{created_if_unique}', created_if_unique)
-          | replace('{owner}', asset.asset_owner | default('Unknown'))
-          | replace('{url}', asset.asset_url | default(''))
+          | replace('{owner}', asset.owner | default('Unknown'))
+          | replace('{url}', asset.url | default(''))
+          | replace('{download_url}', asset.download_url | default(''))
+          | replace('{photo_url}', asset.photo_url | default(''))
+          | replace('{playback_url}', asset.playback_url | default(''))
           | replace('{people}', (asset.people | default([])) | join(', '))
           | replace('{album_name}', event_album_name)
           | replace('{is_favorite}', is_favorite)
@@ -845,21 +841,22 @@ variables:
 
   # Check if filtered assets contain any videos (for Telegram warning)
   has_videos_in_assets: >
-    {{ filtered_assets | selectattr('asset_type', 'equalto', 'VIDEO') | list | length > 0 }}
+    {{ filtered_assets | selectattr('type', 'equalto', 'VIDEO') | list | length > 0 }}
 
   # Video warning text (only populated when Telegram media is enabled and videos are present)
   video_warning_text: >-
     {% if send_telegram_media and has_videos_in_assets and telegram_video_warning_template | length > 0 %}{{ telegram_video_warning_template }}{% else %}{{ '' }}{% endif %}
 
   # Filter assets that have valid URLs (for Telegram media)
-  # URL preference: playback_url (videos) > download_url > asset_url (viewer)
+  # URL preference: playback_url (videos), photo_url (images) > download_url > url (viewer)
   assets_with_urls: >
     {% set ns = namespace(assets = []) %}
     {% for asset in filtered_assets %}
-      {% set playback_url = asset.asset_playback_url | default('') %}
-      {% set download_url = asset.asset_download_url | default('') %}
-      {% set view_url = asset.asset_url | default('') %}
-      {% if playback_url | length > 0 or download_url | length > 0 or view_url | length > 0 %}
+      {% set playback_url = asset.playback_url | default('') %}
+      {% set photo_url = asset.photo_url | default('') %}
+      {% set download_url = asset.download_url | default('') %}
+      {% set view_url = asset.url | default('') %}
+      {% if playback_url | length > 0 or photo_url | length > 0 or download_url | length > 0 or view_url | length > 0 %}
         {% set ns.assets = ns.assets + [asset] %}
       {% endif %}
     {% endfor %}
@@ -1248,17 +1245,19 @@ action:
 
                         **Media to Send ({{ media_to_send | length }} items):**
                         {% for asset in media_to_send %}
-                        {% set playback_url = asset.asset_playback_url | default('') %}
-                        {% set download_url = asset.asset_download_url | default('') %}
-                        {% set view_url = asset.asset_url | default('') %}
-                        {% if asset.asset_type == 'VIDEO' %}
+                        {% set playback_url = asset.playback_url | default('') %}
+                        {% set photo_url = asset.photo_url | default('') %}
+                        {% set download_url = asset.download_url | default('') %}
+                        {% set view_url = asset.url | default('') %}
+                        {% if asset.type == 'VIDEO' %}
                           {% set used_url = playback_url if playback_url | length > 0 else (download_url if download_url | length > 0 else view_url) %}
                         {% else %}
-                          {% set used_url = download_url if download_url | length > 0 else view_url %}
+                          {% set used_url = photo_url if photo_url | length > 0 else (download_url if download_url | length > 0 else view_url) %}
                         {% endif %}
 
-                        **{{ loop.index }}. {{ asset.asset_type }}: {{ asset.asset_filename | default('unknown') }}**
+                        **{{ loop.index }}. {{ asset.type }}: {{ asset.filename | default('unknown') }}**
                         - Playback URL: {{ playback_url if playback_url | length > 0 else '(not available)' }}
+                        - Photo URL: {{ photo_url if photo_url | length > 0 else '(not available)' }}
                         - Download URL: {{ download_url if download_url | length > 0 else '(not available)' }}
                         - View URL: {{ view_url if view_url | length > 0 else '(not available)' }}
                         - **Using: {{ used_url if used_url | length > 0 else '(no URL!)' }}**
@@ -1282,16 +1281,19 @@ action:
                        | replace('{common_date}', common_date) }}
 
               # Build URLs list for media
-              # URL preference: playback_url (videos) > download_url > asset_url
+              # URL preference: playback_url (videos), photo_url (images) > download_url > url
               media_urls: >
                 {% set ns = namespace(items = []) %}
                 {% for asset in media_to_send %}
-                  {% set asset_type = asset.asset_type | default('IMAGE') %}
-                  {% set playback_url = asset.asset_playback_url | default('') %}
-                  {% set download_url = asset.asset_download_url | default('') %}
-                  {% set view_url = asset.asset_url | default('') %}
+                  {% set asset_type = asset.type | default('IMAGE') %}
+                  {% set playback_url = asset.playback_url | default('') %}
+                  {% set photo_url = asset.photo_url | default('') %}
+                  {% set download_url = asset.download_url | default('') %}
+                  {% set view_url = asset.url | default('') %}
                   {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
                     {% set media_url = playback_url %}
+                  {% elif asset_type == 'IMAGE' and photo_url | length > 0 %}
+                    {% set media_url = photo_url %}
                   {% elif download_url | length > 0 %}
                     {% set media_url = download_url %}
                   {% else %}
@@ -1354,5 +1356,4 @@ action:
                             reply_to_message_id: "{{ reply_to_message_id }}"
                             max_group_size: "{{ max_media_per_group }}"
                             chunk_delay: "{{ telegram_media_delay }}"
-                            send_large_photos_as_documents: "{{ telegram_send_large_photos_as_documents }}"
                             wait_for_response: false

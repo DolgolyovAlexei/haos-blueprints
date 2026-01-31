@@ -19,6 +19,7 @@
 #   - Optional: periodic summary notifications with album list and share URLs
 #
 # Event Data from Immich:
+#   Assets Added/Removed/Changed Events:
 #   - `hub_name`:       Name of the Immich hub/instance that sent the event
 #   - `album_id`:       Album ID
 #   - `album_name`:     Album name
@@ -29,6 +30,18 @@
 #   - `added_assets`:   List of added assets (see Added Assets Fields below)
 #   - `removed_assets`: List of removed asset IDs
 #   - `people`:         List of all people detected in the album
+#
+#   Album Renamed Event:
+#   - `hub_name`:       Name of the Immich hub/instance that sent the event
+#   - `album_id`:       Album ID
+#   - `old_name`:       Previous album name
+#   - `new_name`:       New album name
+#   - `album_url`:      Public URL to view the album (only if album has shared link)
+#
+#   Album Deleted Event:
+#   - `hub_name`:       Name of the Immich hub/instance that sent the event
+#   - `album_id`:       Album ID
+#   - `album_name`:     Album name that was deleted
 #
 # Added Assets Fields (each item in `added_assets`):
 #   - `id`:                 Unique asset ID
@@ -181,6 +194,20 @@ blueprint:
           selector:
             boolean:
 
+        track_album_renamed:
+          name: Track Album Renamed
+          description: "Send notifications when albums are renamed"
+          default: true
+          selector:
+            boolean:
+
+        track_album_deleted:
+          name: Track Album Deleted
+          description: "Send notifications when albums are deleted"
+          default: true
+          selector:
+            boolean:
+
     # -------------------------------------------------------------------------
     # Notification Configuration
     # -------------------------------------------------------------------------
@@ -248,6 +275,26 @@ blueprint:
             Message sent when assets are removed from an album.
             Variables: `{album_name}`, `{album_url}`, `{removed_count}`
           default: "🗑️ {removed_count} photo(s) removed from album \"{album_name}\"."
+          selector:
+            text:
+              multiline: true
+
+        message_album_renamed:
+          name: "Album Renamed Message"
+          description: >
+            Message sent when an album is renamed.
+            Variables: `{old_name}`, `{new_name}`, `{album_url}`
+          default: "✏️ Album \"{old_name}\" renamed to \"{new_name}\"."
+          selector:
+            text:
+              multiline: true
+
+        message_album_deleted:
+          name: "Album Deleted Message"
+          description: >
+            Message sent when an album is deleted.
+            Variables: `{album_name}`
+          default: "🗑️ Album \"{album_name}\" was deleted."
           selector:
             text:
               multiline: true
@@ -522,6 +569,14 @@ trigger:
     event_type: immich_album_watcher_changed
     id: "changed"
 
+  - platform: event
+    event_type: immich_album_watcher_album_renamed
+    id: "album_renamed"
+
+  - platform: event
+    event_type: immich_album_watcher_album_deleted
+    id: "album_deleted"
+
   # Periodic summary trigger (time pattern)
   # Note: Uses template to dynamically set interval, but HA requires static value
   # so we trigger every hour and check interval in conditions
@@ -558,6 +613,8 @@ variables:
   track_assets_removed: !input track_assets_removed
   track_images: !input track_images
   track_videos: !input track_videos
+  track_album_renamed: !input track_album_renamed
+  track_album_deleted: !input track_album_deleted
   enable_debug_notifications: !input enable_debug_notifications
 
   # Telegram Media Settings
@@ -604,6 +661,8 @@ variables:
   # ---------------------------------------------------------------------------
   message_assets_added_template: !input message_assets_added
   message_assets_removed_template: !input message_assets_removed
+  message_album_renamed_template: !input message_album_renamed
+  message_album_deleted_template: !input message_album_deleted
   message_people_format_template: !input message_people_format
   message_asset_image_template: !input message_asset_image
   message_asset_video_template: !input message_asset_video
@@ -623,6 +682,10 @@ variables:
   event_removed_count: "{{ trigger.event.data.removed_count | default(0) | int }}"
   event_people: "{{ trigger.event.data.people | default([]) }}"
   event_added_assets: "{{ trigger.event.data.added_assets | default([]) }}"
+
+  # Album renamed event data
+  event_old_name: "{{ trigger.event.data.old_name | default('') }}"
+  event_new_name: "{{ trigger.event.data.new_name | default('') }}"
 
   # ---------------------------------------------------------------------------
   # Computed Values
@@ -725,6 +788,10 @@ variables:
       {% else %}
         {{ false }}
       {% endif %}
+    {% elif trigger.id == 'album_renamed' and track_album_renamed %}
+      {{ true }}
+    {% elif trigger.id == 'album_deleted' and track_album_deleted %}
+      {{ true }}
     {% else %}
       {{ false }}
     {% endif %}
@@ -818,6 +885,7 @@ action:
                       for_each: "{{ telegram_chat_ids }}"
                       sequence:
                         - service: immich_album_watcher.send_telegram_notification
+                          response_variable: telegram_periodic_response
                           target:
                             entity_id: "{{ album_id_entities[0] }}"
                           data:
@@ -840,23 +908,36 @@ action:
             data:
               title: "Immich Album Watcher Debug"
               message: >
-                Trigger ID: {{ trigger.id }}
-                Hub: {{ event_hub_name }}
-                Album: {{ event_album_name }}
-                Album ID: {{ event_album_id }}
-                Album URL: {{ event_album_url }}
-                Change Type: {{ event_change_type }}
-                Added Count (raw): {{ event_added_count }}
-                Added Count (filtered): {{ filtered_added_count }}
-                Removed Count: {{ event_removed_count }}
-                Added Assets: {{ event_added_assets | length }}
-                People: {{ event_people | join(', ') }}
-                Is Hub Tracked: {{ is_hub_tracked }}
-                Is Album Tracked: {{ is_album_tracked }}
-                Should Notify: {{ should_notify }}
-                Track Images: {{ track_images }}
-                Track Videos: {{ track_videos }}
-                Include Asset Details: {{ include_asset_details }}
+                **Event Data:**
+                - Trigger ID: {{ trigger.id }}
+                - Hub: {{ event_hub_name }}
+                - Album: {{ event_album_name }}
+                - Album ID: {{ event_album_id }}
+                - Album URL: {{ event_album_url }}
+                - Change Type: {{ event_change_type }}
+
+                **Asset Counts:**
+                - Added Count (raw): {{ event_added_count }}
+                - Added Count (filtered): {{ filtered_added_count }}
+                - Removed Count: {{ event_removed_count }}
+                - Added Assets: {{ event_added_assets | length }}
+
+                **People:**
+                - {{ event_people | join(', ') if event_people | length > 0 else '(none)' }}
+
+                **Filtering:**
+                - Is Hub Tracked: {{ is_hub_tracked }}
+                - Is Album Tracked: {{ is_album_tracked }}
+                - Should Notify: {{ should_notify }}
+                - Track Images: {{ track_images }}
+                - Track Videos: {{ track_videos }}
+                - Include Asset Details: {{ include_asset_details }}
+
+                **Telegram:**
+                - Enabled: {{ send_telegram_media }}
+                - Chat IDs: {{ telegram_chat_ids | join(', ') if telegram_chat_ids | length > 0 else '(none)' }}
+                - Album Shared: {{ 'Yes' if event_album_url | length > 0 else 'No (media cannot be sent)' }}
+                - Assets with URLs: {{ assets_with_urls | length }}
 
   # ---------------------------------------------------------------------------
   # Send Notification Based on Event Type
@@ -953,6 +1034,80 @@ action:
                     data:
                       message: "{{ message }}"
 
+      # ---------------------------------------------------------------------
+      # CASE 4: Album Renamed
+      # ---------------------------------------------------------------------
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'album_renamed' and track_album_renamed }}"
+        sequence:
+          - variables:
+              message: >
+                {% set tpl = message_album_renamed_template %}
+                {{ tpl | replace('{old_name}', event_old_name)
+                       | replace('{new_name}', event_new_name)
+                       | replace('{album_url}', event_album_url) }}
+
+          - service: notify.send_message
+            target:
+              entity_id: "{{ notify_targets }}"
+            data:
+              message: "{{ message }}"
+
+          # Also send to Telegram if configured
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ send_telegram_media and telegram_chat_ids | length > 0 and album_id_entities | length > 0 }}"
+                sequence:
+                  - repeat:
+                      for_each: "{{ telegram_chat_ids }}"
+                      sequence:
+                        - service: immich_album_watcher.send_telegram_notification
+                          response_variable: telegram_renamed_response
+                          target:
+                            entity_id: "{{ album_id_entities[0] }}"
+                          data:
+                            chat_id: "{{ repeat.item }}"
+                            caption: "{{ message }}"
+                            disable_web_page_preview: "{{ telegram_disable_url_preview }}"
+
+      # ---------------------------------------------------------------------
+      # CASE 5: Album Deleted
+      # ---------------------------------------------------------------------
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'album_deleted' and track_album_deleted }}"
+        sequence:
+          - variables:
+              message: >
+                {% set tpl = message_album_deleted_template %}
+                {{ tpl | replace('{album_name}', event_album_name) }}
+
+          - service: notify.send_message
+            target:
+              entity_id: "{{ notify_targets }}"
+            data:
+              message: "{{ message }}"
+
+          # Also send to Telegram if configured
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ send_telegram_media and telegram_chat_ids | length > 0 and album_id_entities | length > 0 }}"
+                sequence:
+                  - repeat:
+                      for_each: "{{ telegram_chat_ids }}"
+                      sequence:
+                        - service: immich_album_watcher.send_telegram_notification
+                          response_variable: telegram_deleted_response
+                          target:
+                            entity_id: "{{ album_id_entities[0] }}"
+                          data:
+                            chat_id: "{{ repeat.item }}"
+                            caption: "{{ message }}"
+                            disable_web_page_preview: "{{ telegram_disable_url_preview }}"
+
   # ---------------------------------------------------------------------------
   # Send Media to Telegram (if enabled)
   # ---------------------------------------------------------------------------
@@ -1003,13 +1158,15 @@ action:
                         {% else %}
                           {% set used_url = download_url if download_url | length > 0 else view_url %}
                         {% endif %}
-                        - {{ asset.asset_type }}: {{ asset.asset_filename | default('unknown') }}
-                          Playback URL: {{ playback_url if playback_url | length > 0 else '(not available)' }}
-                          Download URL: {{ download_url if download_url | length > 0 else '(not available)' }}
-                          View URL: {{ view_url if view_url | length > 0 else '(not available)' }}
-                          **Using: {{ used_url if used_url | length > 0 else '(no URL!)' }}**
+
+                        **{{ loop.index }}. {{ asset.asset_type }}: {{ asset.asset_filename | default('unknown') }}**
+                        - Playback URL: {{ playback_url if playback_url | length > 0 else '(not available)' }}
+                        - Download URL: {{ download_url if download_url | length > 0 else '(not available)' }}
+                        - View URL: {{ view_url if view_url | length > 0 else '(not available)' }}
+                        - **Using: {{ used_url if used_url | length > 0 else '(no URL!)' }}**
                         {% endfor %}
 
+                        ---
                         **Note:** Media is sent via immich_album_watcher.send_telegram_notification service.
                         Large lists are automatically split into multiple groups.
 
@@ -1074,15 +1231,28 @@ action:
                         - condition: template
                           value_template: "{{ media_urls | length > 0 }}"
                       sequence:
+                        # Debug: Log reply_to_message_id value
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ enable_debug_notifications }}"
+                              sequence:
+                                - service: persistent_notification.create
+                                  data:
+                                    title: "Immich Album Watcher - Reply To Debug"
+                                    message: >
+                                      **Reply To Message ID Debug:**
+                                      - Value: {{ reply_to_message_id }}
+
                         - service: immich_album_watcher.send_telegram_notification
+                          response_variable: telegram_media_response
                           continue_on_error: true
                           target:
                             entity_id: "{{ album_id_entities[0] if album_id_entities | length > 0 else '' }}"
                           data:
                             chat_id: "{{ current_chat_id }}"
                             urls: "{{ media_urls }}"
-                            caption: "{{ event_album_name }}"
-                            reply_to_message_id: >
-                              {{ reply_to_message_id if reply_to_message_id > 0 else omit }}
+                            reply_to_message_id: "{{ reply_to_message_id }}"
                             max_group_size: "{{ max_media_per_group }}"
                             chunk_delay: "{{ telegram_media_delay }}"
+                            wait_for_response: false

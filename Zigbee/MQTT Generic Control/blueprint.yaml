@@ -1,23 +1,8 @@
-# =============================================================================
 # MQTT Generic Control Blueprint
-# =============================================================================
-# A flexible blueprint that triggers custom actions based on MQTT messages.
-# Supports up to 8 different action IDs, each with its own callback.
-#
-# Features:
-# - Listen to up to 4 MQTT topics simultaneously
-# - Map up to 8 action IDs to custom callback actions
-# - Works with any Zigbee2MQTT device that sends action payloads
-# - Fully customizable actions for each trigger
-#
-# How It Works:
-# - Listens for MQTT messages on configured topics
-# - Extracts the `action` field from the JSON payload
-# - Matches action against configured action IDs
-# - Executes the corresponding callback action sequence
+# Triggers custom actions based on MQTT messages with up to 8 action callbacks.
+# See README.md for detailed documentation.
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
-# =============================================================================
 
 blueprint:
   name: "Custom: MQTT Generic Control"

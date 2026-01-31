@@ -1,18 +1,6 @@
-# =============================================================================
 # Multi-Sensor Alarm & Notification Blueprint
-# =============================================================================
-# This blueprint monitors multiple binary sensors and triggers:
-# - Push notifications when sensors activate
-# - Alarm device control (with configurable melody and volume)
-#
-# Features:
-# - Per-sensor custom notification messages
-# - Debounce timer to prevent false alarms from brief sensor triggers
-# - Optional melody and volume selection for alarm devices
-# - Automatic alarm turn-off when all sensors clear
-#
-# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
-# =============================================================================
+# Monitors sensors and triggers notifications and alarms when activated.
+# See README.md for detailed documentation.
 
 blueprint:
   name: "Custom: Multi-Sensor Alarm & Notification"

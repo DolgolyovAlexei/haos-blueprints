@@ -1,11 +1,8 @@
-# =============================================================================
 # MQTT Knob Media Controller Blueprint
-# =============================================================================
 # Controls a media player using an MQTT-connected rotary encoder/knob.
-# Supports customizable action IDs to work with various MQTT devices.
+# See README.md for detailed documentation.
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
-# =============================================================================
 
 blueprint:
   name: "MQTT Knob Media Controller"

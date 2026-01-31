@@ -1,24 +1,8 @@
-# =============================================================================
 # MQTT Button Control Blueprint
-# =============================================================================
-# Controls lights and switches using Zigbee2MQTT button devices with multiple
-# action mappings.
-#
-# Features:
-# - Map multiple action IDs to different lights/switches
-# - Supports light, switch, and input_boolean entities
-# - Visual feedback via blink indication when pressing already-active light
-# - Tracks last interacted entity in an input_text helper
-# - Supports multiple MQTT topics (multiple buttons)
-#
-# How It Works:
-# - Receives MQTT messages with action IDs from Zigbee buttons
-# - Maps action ID to corresponding entity by index position
-# - Toggles the matched entity (light/switch/input_boolean)
-# - Optionally blinks light if it's already on (idle timeout feature)
+# Controls lights and switches using Zigbee2MQTT button devices.
+# See README.md for detailed documentation.
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
-# =============================================================================
 
 blueprint:
   name: "Custom: MQTT Button Control"

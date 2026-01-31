@@ -1,27 +1,6 @@
-# =============================================================================
 # Telegram Commands Blueprint
-# =============================================================================
-# This blueprint responds to Telegram bot commands (e.g., /start, /help, /status).
-# Each command can trigger a different callback action and send an optional reply.
-#
-# How It Works:
-# 1. User sends a command to the Telegram bot (e.g., /lights_on)
-# 2. Home Assistant receives telegram_command event
-# 3. Blueprint matches command to the configured list
-# 4. Executes the corresponding callback action
-# 5. Optionally sends a reply message
-#
-# Command Format:
-# Commands should start with "/" (e.g., /status, /lights_on, /arm_alarm)
-# The bot must be configured to receive these commands.
-#
-# Example Configuration:
-# - Commands: ["/status", "/lights_on", "/lights_off", "/arm"]
-# - Answers: ["Status checked", "Lights turned on", "Lights turned off", "Alarm armed"]
-# - Each command has its own callback action
-#
-# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
-# =============================================================================
+# Responds to Telegram bot commands by executing callback actions.
+# See README.md for detailed documentation.
 
 blueprint:
   name: "Custom: Telegram Commands"

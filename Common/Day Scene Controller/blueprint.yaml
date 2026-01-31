@@ -1,29 +1,6 @@
-# =============================================================================
 # Day Scene Controller Blueprint
-# =============================================================================
-# This blueprint automatically activates scenes based on time-of-day state
-# and a control switch. It bridges the Time of Day State Machine with scene
-# activation.
-#
-# How It Works:
-# - Monitors a time-of-day input_select (from Time of Day State Machine)
-# - When control switch is ON: activates the scene matching current time slot
-# - When control switch is OFF: activates the default scene
-# - Optionally applies default scene as transition before switching scenes
-#
-# Index Mapping:
-# Scenes are mapped to time-of-day states by index:
-# - Time state option[0] -> scenes[0]
-# - Time state option[1] -> scenes[1]
-# - etc.
-#
-# Example:
-# - Time of Day options: ["Night", "Morning", "Afternoon", "Evening"]
-# - Scenes: [scene.night, scene.morning, scene.afternoon, scene.evening]
-# - When time is "Morning" and control is ON -> scene.morning activates
-#
-# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
-# =============================================================================
+# Automatically activates scenes based on time-of-day state and control switch.
+# See README.md for detailed documentation.
 
 blueprint:
   name: "Custom: Day Scene Controller"

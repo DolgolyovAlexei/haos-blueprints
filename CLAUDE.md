@@ -22,4 +22,41 @@ After any change to repository content (blueprints, documentation, or other file
 
 ## Repository Structure
 
+Each blueprint is organized in its own folder:
+
+```text
+Common/
+  Blueprint Name/
+    blueprint.yaml    # The automation blueprint
+    README.md         # Detailed documentation
+Zigbee/
+  Blueprint Name/
+    blueprint.yaml
+    README.md
+```
+
+### Working with Blueprints
+
+**When modifying a blueprint:**
+
+1. Edit `blueprint.yaml` for code changes
+2. Update `README.md` if the change affects features, configuration, or behavior
+3. Keep the blueprint header short (4-5 lines) - detailed docs go in README.md
+
+**When creating a new blueprint:**
+
+1. Create a new folder named after the blueprint (e.g., `Common/My New Blueprint/`)
+2. Add `blueprint.yaml` with a short header referencing README.md
+3. Add `README.md` with full documentation (features, how it works, configuration)
+
+**Blueprint header format:**
+
+```yaml
+# Blueprint Name
+# One-line description of what it does.
+# See README.md for detailed documentation.
+#
+# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
+```
+
 When any blueprint file is moved ask if I need to update the link somewhere else.

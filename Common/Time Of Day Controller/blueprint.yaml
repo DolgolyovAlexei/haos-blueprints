@@ -1,33 +1,6 @@
-# =============================================================================
 # Time of Day State Machine Blueprint
-# =============================================================================
-# This blueprint automatically updates an input_select based on time-of-day
-# thresholds. Useful for managing different modes throughout the day
-# (morning, afternoon, evening, night, etc.).
-#
-# How It Works:
-# - Define states (e.g., "Morning", "Afternoon", "Evening", "Night")
-# - Define corresponding time thresholds for each state
-# - The blueprint sets the input_select to the appropriate state based on
-#   current time
-#
-# Index Mapping:
-# States and times are mapped by index position:
-# - states[0] activates at times[0]
-# - states[1] activates at times[1]
-# - etc.
-#
-# Supported Time Formats:
-# - input_datetime entities (time-only: HH:MM:SS)
-# - Sensor entities reporting time strings (e.g., sun.sun next_rising attribute)
-#
-# Example Configuration:
-# - States: ["Night", "Morning", "Afternoon", "Evening"]
-# - Times: [00:00, 06:00, 12:00, 18:00]
-# - At 14:30, the state would be "Afternoon" (last threshold passed)
-#
-# Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
-# =============================================================================
+# Updates an input_select based on time-of-day thresholds.
+# See README.md for detailed documentation.
 
 blueprint:
   name: "Custom: Time of Day State Machine"

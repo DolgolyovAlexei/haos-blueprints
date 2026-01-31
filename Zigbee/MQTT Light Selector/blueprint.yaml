@@ -1,12 +1,8 @@
-# =============================================================================
 # MQTT Light Selector Blueprint
-# =============================================================================
-# Cycles through a list of lights using MQTT button events (up/down/remind).
-# The selected light flashes to provide visual feedback, then returns to its
-# original state. Selection is persisted in an input_text helper.
+# Cycles through lights using MQTT button events with visual feedback.
+# See README.md for detailed documentation.
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
-# =============================================================================
 
 blueprint:
   name: "MQTT Light Selector"

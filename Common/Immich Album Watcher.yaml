@@ -131,6 +131,43 @@
 #   fire this event from Developer Tools > Events:
 #   Event type: immich_album_watcher_test_periodic_summary
 #
+#   To target a specific automation, set its Automation ID in config and
+#   include it in the event data:
+#   Event data: {"automation_id": "your-automation-id"}
+#
+# Scheduled Assets:
+#   Sends scheduled notifications with existing assets from tracked albums.
+#   Uses the immich_album_watcher.get_assets service to fetch assets.
+#
+#   Album Modes:
+#   - `per_album`: Send separate notifications for each tracked album
+#   - `combined`:  Fetch assets from all albums into one notification
+#   - `random`:    Pick one random album each time
+#
+#   Asset Filter Options:
+#   - `limit`:            Maximum number of assets to fetch (1-100)
+#   - `favorite_only`:    Only fetch favorite assets
+#   - `asset_type`:       Filter by type (all, photo, video)
+#   - `order_by`:         Sort by (random, date, rating, name)
+#   - `order`:            Sort direction (ascending, descending)
+#   - `filter_min_rating`: Minimum rating filter (1-5, 0 = no filter)
+#   - `min_date`:         Assets created on or after this date (YYYY-MM-DD)
+#   - `max_date`:         Assets created on or before this date (YYYY-MM-DD)
+#
+#   Scheduled Assets Message Template Variables:
+#   - `{album_name}`   - Name of the album
+#   - `{album_url}`    - Share URL for the album
+#   - `{asset_count}`  - Number of assets fetched
+#   - `{assets}`       - Formatted list of assets (using asset item template)
+#
+#   Testing Scheduled Assets:
+#   To test without waiting for the scheduled time, fire this event:
+#   Event type: immich_album_watcher_test_scheduled_assets
+#
+#   To target a specific automation, set its Automation ID in config and
+#   include it in the event data:
+#   Event data: {"automation_id": "your-automation-id"}
+#
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
 
@@ -576,6 +613,166 @@ blueprint:
               multiline: true
 
     # -------------------------------------------------------------------------
+    # Scheduled Assets
+    # -------------------------------------------------------------------------
+    scheduled_assets_group:
+      name: "Scheduled Assets"
+      description: "Send scheduled notifications with existing assets from tracked albums"
+      collapsed: true
+      input:
+        enable_scheduled_assets:
+          name: Enable Scheduled Assets
+          description: >
+            Send scheduled notifications with assets from tracked albums.
+            Uses the immich_album_watcher.get_assets service to fetch assets.
+          default: false
+          selector:
+            boolean:
+
+        scheduled_assets_interval_hours:
+          name: Interval (Hours)
+          description: "How often to send scheduled asset notifications (in hours)"
+          default: 24
+          selector:
+            number:
+              min: 1
+              max: 168
+              unit_of_measurement: hours
+              mode: slider
+
+        scheduled_assets_start_hour:
+          name: Start Hour
+          description: >
+            Hour of day (0-23) when the first notification should be sent.
+            Example: Start hour 9 with 24h interval = daily at 09:00.
+          default: 9
+          selector:
+            number:
+              min: 0
+              max: 23
+              unit_of_measurement: hour
+              mode: slider
+
+        scheduled_assets_album_mode:
+          name: Album Mode
+          description: >
+            How to handle multiple tracked albums.
+            Per Album: Send separate notification for each album.
+            Combined: Fetch assets from all albums into one notification.
+            Random: Pick one random album each time.
+          default: "per_album"
+          selector:
+            select:
+              options:
+                - label: "Per Album"
+                  value: "per_album"
+                - label: "Combined"
+                  value: "combined"
+                - label: "Random Album"
+                  value: "random"
+
+        scheduled_assets_limit:
+          name: Asset Limit
+          description: "Maximum number of assets to fetch per album"
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 100
+              mode: slider
+
+        scheduled_assets_favorite_only:
+          name: Favorites Only
+          description: "Only fetch assets marked as favorites"
+          default: false
+          selector:
+            boolean:
+
+        scheduled_assets_type:
+          name: Asset Type
+          description: "Filter assets by type"
+          default: "all"
+          selector:
+            select:
+              options:
+                - label: "All"
+                  value: "all"
+                - label: "Photos Only"
+                  value: "photo"
+                - label: "Videos Only"
+                  value: "video"
+
+        scheduled_assets_order_by:
+          name: Order By
+          description: "How to sort/select assets"
+          default: "random"
+          selector:
+            select:
+              options:
+                - label: "Random"
+                  value: "random"
+                - label: "Date"
+                  value: "date"
+                - label: "Rating"
+                  value: "rating"
+                - label: "Name"
+                  value: "name"
+
+        scheduled_assets_order:
+          name: Order Direction
+          description: "Sort direction (only applies when Order By is not Random)"
+          default: "descending"
+          selector:
+            select:
+              options:
+                - label: "Descending (newest/highest first)"
+                  value: "descending"
+                - label: "Ascending (oldest/lowest first)"
+                  value: "ascending"
+
+        scheduled_assets_min_rating:
+          name: Minimum Rating
+          description: >
+            Only fetch assets with this rating or higher (1-5 stars).
+            Set to 0 to include all assets regardless of rating.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 5
+              mode: slider
+
+        scheduled_assets_min_date:
+          name: Minimum Date
+          description: >
+            Only fetch assets created on or after this date.
+            Format: YYYY-MM-DD (e.g., 2024-01-01).
+            Leave empty for no minimum date filter.
+          default: ""
+          selector:
+            text:
+
+        scheduled_assets_max_date:
+          name: Maximum Date
+          description: >
+            Only fetch assets created on or before this date.
+            Format: YYYY-MM-DD (e.g., 2024-12-31).
+            Leave empty for no maximum date filter.
+          default: ""
+          selector:
+            text:
+
+        scheduled_assets_message:
+          name: Message Template
+          description: >
+            Message template for scheduled asset notifications.
+            Variables: `{album_name}`, `{album_url}`, `{asset_count}`, `{assets}`
+          default: "📸 Here are some photos from album \"{album_name}\":{assets}"
+          selector:
+            text:
+              multiline: true
+
+    # -------------------------------------------------------------------------
     # Debug
     # -------------------------------------------------------------------------
     debug:
@@ -590,6 +787,18 @@ blueprint:
           default: false
           selector:
             boolean:
+
+        automation_id:
+          name: Automation ID
+          description: >
+            Optional identifier for this automation instance.
+            Used to target specific automations when firing test events.
+            When firing a test event with `automation_id` in the event data,
+            only automations with a matching ID will respond.
+            Leave empty to respond to all test events.
+          default: ""
+          selector:
+            text:
 
 # =============================================================================
 # AUTOMATION MODE
@@ -636,6 +845,13 @@ trigger:
     event_type: immich_album_watcher_test_periodic_summary
     id: "periodic_summary"
 
+  # Manual trigger for testing scheduled assets
+  # Fire this event from Developer Tools > Events to test scheduled assets immediately
+  # Event type: immich_album_watcher_test_scheduled_assets
+  - platform: event
+    event_type: immich_album_watcher_test_scheduled_assets
+    id: "scheduled_assets"
+
 # =============================================================================
 # VARIABLES
 # =============================================================================
@@ -645,6 +861,7 @@ variables:
   # ---------------------------------------------------------------------------
   hub_names: !input hub_names
   album_id_entities: !input album_id_entities
+  automation_id: !input automation_id
 
   # Read album IDs from entity states
   album_ids: >
@@ -685,6 +902,21 @@ variables:
   periodic_start_hour: !input periodic_start_hour
   periodic_summary_message_template: !input periodic_summary_message
   periodic_album_template: !input periodic_album_template
+
+  # Scheduled Assets Settings
+  enable_scheduled_assets: !input enable_scheduled_assets
+  scheduled_assets_interval_hours: !input scheduled_assets_interval_hours
+  scheduled_assets_start_hour: !input scheduled_assets_start_hour
+  scheduled_assets_album_mode: !input scheduled_assets_album_mode
+  scheduled_assets_limit: !input scheduled_assets_limit
+  scheduled_assets_favorite_only: !input scheduled_assets_favorite_only
+  scheduled_assets_type: !input scheduled_assets_type
+  scheduled_assets_order_by: !input scheduled_assets_order_by
+  scheduled_assets_order: !input scheduled_assets_order
+  scheduled_assets_min_rating: !input scheduled_assets_min_rating
+  scheduled_assets_min_date: !input scheduled_assets_min_date
+  scheduled_assets_max_date: !input scheduled_assets_max_date
+  scheduled_assets_message_template: !input scheduled_assets_message
 
   # Parse chat IDs from notify entity friendly names (format: "Name (123456789)")
   # and combine with chat IDs from input_text entities
@@ -893,10 +1125,16 @@ variables:
   # Example: start_hour=12, interval=24 → sends at 12:00 daily
   # Example: start_hour=9, interval=12 → sends at 09:00 and 21:00
   # Manual test event (immich_album_watcher_test_periodic_summary) bypasses time check
+  # If event data contains automation_id, only matching automations respond
   should_send_periodic_summary: >
     {% if trigger.id == 'periodic_summary' and enable_periodic_summary %}
       {% if trigger.platform == 'event' and trigger.event.event_type == 'immich_album_watcher_test_periodic_summary' %}
-        {{ true }}
+        {% set event_automation_id = trigger.event.data.automation_id | default('') %}
+        {% if event_automation_id | length > 0 %}
+          {{ automation_id == event_automation_id }}
+        {% else %}
+          {{ true }}
+        {% endif %}
       {% else %}
         {% set current_hour = now().hour %}
         {% set start = periodic_start_hour | int %}
@@ -934,17 +1172,51 @@ variables:
        | replace('{albums}', periodic_albums_list)
        | replace('{album_count}', album_ids | length | string) }}
 
+  # ---------------------------------------------------------------------------
+  # Scheduled Assets Variables
+  # ---------------------------------------------------------------------------
+  # Check if scheduled assets should run (every N hours starting from start_hour)
+  # Manual test event (immich_album_watcher_test_scheduled_assets) bypasses time check
+  # If event data contains automation_id, only matching automations respond
+  should_send_scheduled_assets: >
+    {% if trigger.id == 'scheduled_assets' and enable_scheduled_assets %}
+      {% set event_automation_id = trigger.event.data.automation_id | default('') %}
+      {% if event_automation_id | length > 0 %}
+        {{ automation_id == event_automation_id }}
+      {% else %}
+        {{ true }}
+      {% endif %}
+    {% elif trigger.id == 'periodic_summary' and enable_scheduled_assets %}
+      {% set current_hour = now().hour %}
+      {% set start = scheduled_assets_start_hour | int %}
+      {% set interval = scheduled_assets_interval_hours | int %}
+      {{ (current_hour - start) % interval == 0 }}
+    {% else %}
+      {{ false }}
+    {% endif %}
+
+  # Get list of album entities to process based on album mode
+  scheduled_assets_album_entities: >
+    {% if scheduled_assets_album_mode == 'random' %}
+      {{ [album_id_entities | random] if album_id_entities | length > 0 else [] }}
+    {% else %}
+      {{ album_id_entities }}
+    {% endif %}
+
 # =============================================================================
 # CONDITIONS
 # =============================================================================
 condition:
   # Allow through if:
-  # 1. Periodic summary trigger and should send periodic summary
-  # 2. Event trigger and passes all event-based checks
+  # 1. Periodic summary trigger and should send periodic summary or scheduled assets
+  # 2. Scheduled assets trigger
+  # 3. Event trigger and passes all event-based checks
   - condition: template
     value_template: >
-      {% if trigger.id == 'periodic_summary' %}
-        {{ should_send_periodic_summary }}
+      {% if trigger.id == 'scheduled_assets' %}
+        {{ should_send_scheduled_assets }}
+      {% elif trigger.id == 'periodic_summary' %}
+        {{ should_send_periodic_summary or should_send_scheduled_assets }}
       {% else %}
         {{ is_hub_tracked and is_album_tracked and should_notify }}
       {% endif %}
@@ -960,7 +1232,7 @@ action:
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id == 'periodic_summary' }}"
+            value_template: "{{ should_send_periodic_summary }}"
         sequence:
           # Send periodic summary to notification targets
           - service: notify.send_message
@@ -987,8 +1259,374 @@ action:
                             caption: "{{ periodic_summary_formatted }}"
                             disable_web_page_preview: "{{ telegram_disable_url_preview }}"
 
-          # Stop here for periodic summary - don't continue to event-based actions
-          - stop: "Periodic summary sent"
+  # ---------------------------------------------------------------------------
+  # SCHEDULED ASSETS: Send notifications with assets from tracked albums
+  # ---------------------------------------------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ should_send_scheduled_assets }}"
+        sequence:
+          # Process albums based on album_mode (per_album, combined, random)
+          - choose:
+              # Per Album Mode: Send separate notification for each album
+              - conditions:
+                  - condition: template
+                    value_template: "{{ scheduled_assets_album_mode in ['per_album', 'random'] }}"
+                sequence:
+                  - repeat:
+                      for_each: "{{ scheduled_assets_album_entities }}"
+                      sequence:
+                        - variables:
+                            current_album_entity: "{{ repeat.item }}"
+                            current_album_name: >
+                              {% set name_attr = state_attr(current_album_entity, 'album_name') %}
+                              {{ name_attr if name_attr not in [none, '', 'unknown', 'unavailable'] else states(current_album_entity) }}
+                            current_album_url: >
+                              {% set url_attr = state_attr(current_album_entity, 'share_url') %}
+                              {{ url_attr if url_attr not in [none, 'unknown', 'unavailable'] else '' }}
+
+                        # Build service data dynamically (omit optional params when not set)
+                        - variables:
+                            get_assets_data: >
+                              {% set data = {
+                                'limit': scheduled_assets_limit | int,
+                                'favorite_only': scheduled_assets_favorite_only,
+                                'order_by': scheduled_assets_order_by,
+                                'order': scheduled_assets_order
+                              } %}
+                              {% if scheduled_assets_type != 'all' %}
+                                {% set data = dict(data, asset_type=scheduled_assets_type) %}
+                              {% endif %}
+                              {% if scheduled_assets_min_rating | int > 0 %}
+                                {% set data = dict(data, filter_min_rating=scheduled_assets_min_rating | int) %}
+                              {% endif %}
+                              {% if scheduled_assets_min_date | length > 0 %}
+                                {% set data = dict(data, min_date=scheduled_assets_min_date) %}
+                              {% endif %}
+                              {% if scheduled_assets_max_date | length > 0 %}
+                                {% set data = dict(data, max_date=scheduled_assets_max_date) %}
+                              {% endif %}
+                              {{ data }}
+
+                        # Fetch assets from this album
+                        - service: immich_album_watcher.get_assets
+                          response_variable: fetched_assets_response
+                          target:
+                            entity_id: "{{ current_album_entity }}"
+                          data: "{{ get_assets_data }}"
+
+                        - variables:
+                            fetched_assets: "{{ fetched_assets_response[current_album_entity].assets | default([]) }}"
+                            fetched_asset_count: "{{ fetched_assets | length }}"
+
+                        # Only send notification if we got assets
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ fetched_asset_count | int > 0 }}"
+                              sequence:
+                                # Format assets list using asset templates
+                                - variables:
+                                    scheduled_assets_list: >
+                                      {% set ns = namespace(items = '') %}
+                                      {% for asset in fetched_assets %}
+                                        {% set asset_template = message_asset_video_template if asset.type == 'VIDEO' else message_asset_image_template %}
+                                        {% set raw_date = asset.created_at | default('') %}
+                                        {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
+                                        {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+                                        {% set is_favorite = favorite_indicator_template if asset.is_favorite | default(false) else '' %}
+                                        {% set rating = asset.rating | default('') | string if asset.rating not in [none, ''] else '' %}
+                                        {% set item = asset_template
+                                          | replace('{filename}', asset.filename | default('Unknown'))
+                                          | replace('{description}', asset.description | default(''))
+                                          | replace('{type}', asset.type | default('Unknown'))
+                                          | replace('{created}', formatted_date)
+                                          | replace('{created_if_unique}', formatted_date)
+                                          | replace('{owner}', asset.owner | default('Unknown'))
+                                          | replace('{url}', asset.url | default(''))
+                                          | replace('{download_url}', asset.download_url | default(''))
+                                          | replace('{photo_url}', asset.photo_url | default(''))
+                                          | replace('{playback_url}', asset.playback_url | default(''))
+                                          | replace('{people}', (asset.people | default([])) | join(', '))
+                                          | replace('{album_name}', current_album_name)
+                                          | replace('{is_favorite}', is_favorite)
+                                          | replace('{rating}', rating) %}
+                                        {% set ns.items = ns.items ~ item %}
+                                      {% endfor %}
+                                      {{ ns.items }}
+                                    scheduled_message: >
+                                      {{ scheduled_assets_message_template
+                                         | replace('{album_name}', current_album_name)
+                                         | replace('{album_url}', current_album_url)
+                                         | replace('{asset_count}', fetched_asset_count | string)
+                                         | replace('{assets}', scheduled_assets_list) }}
+
+                                # Send to notification targets
+                                - service: notify.send_message
+                                  target:
+                                    entity_id: "{{ notify_targets }}"
+                                  data:
+                                    message: "{{ scheduled_message }}"
+
+                                # Send to Telegram with media if configured
+                                - choose:
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ send_telegram_media and telegram_chat_ids | length > 0 }}"
+                                      sequence:
+                                        # Build media URLs for Telegram
+                                        - variables:
+                                            scheduled_media_urls: >
+                                              {% set ns = namespace(items = []) %}
+                                              {% for asset in fetched_assets %}
+                                                {% set asset_type = asset.type | default('IMAGE') %}
+                                                {% set playback_url = asset.playback_url | default('') %}
+                                                {% set photo_url = asset.photo_url | default('') %}
+                                                {% set download_url = asset.download_url | default('') %}
+                                                {% set view_url = asset.url | default('') %}
+                                                {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
+                                                  {% set media_url = playback_url %}
+                                                {% elif asset_type == 'IMAGE' and photo_url | length > 0 %}
+                                                  {% set media_url = photo_url %}
+                                                {% elif download_url | length > 0 %}
+                                                  {% set media_url = download_url %}
+                                                {% else %}
+                                                  {% set media_url = view_url %}
+                                                {% endif %}
+                                                {% if media_url | length > 0 %}
+                                                  {% set media_type = 'video' if asset_type == 'VIDEO' else 'photo' %}
+                                                  {% set item = {'url': media_url, 'type': media_type} %}
+                                                  {% set ns.items = ns.items + [item] %}
+                                                {% endif %}
+                                              {% endfor %}
+                                              {{ ns.items }}
+
+                                        # Send to each Telegram chat
+                                        - repeat:
+                                            for_each: "{{ telegram_chat_ids }}"
+                                            sequence:
+                                              # First send text message
+                                              - service: immich_album_watcher.send_telegram_notification
+                                                response_variable: telegram_scheduled_text_response
+                                                target:
+                                                  entity_id: "{{ current_album_entity }}"
+                                                data:
+                                                  chat_id: "{{ repeat.item }}"
+                                                  caption: "{{ scheduled_message }}"
+                                                  disable_web_page_preview: "{{ telegram_disable_url_preview }}"
+
+                                              # Extract message ID for reply
+                                              - variables:
+                                                  scheduled_reply_to_id: "{{ telegram_scheduled_text_response[current_album_entity].message_id | default(0) | int }}"
+
+                                              # Send media if we have URLs
+                                              - choose:
+                                                  - conditions:
+                                                      - condition: template
+                                                        value_template: "{{ scheduled_media_urls | length > 0 }}"
+                                                    sequence:
+                                                      - service: immich_album_watcher.send_telegram_notification
+                                                        response_variable: telegram_scheduled_media_response
+                                                        continue_on_error: true
+                                                        target:
+                                                          entity_id: "{{ current_album_entity }}"
+                                                        data:
+                                                          chat_id: "{{ repeat.item }}"
+                                                          urls: "{{ scheduled_media_urls }}"
+                                                          reply_to_message_id: "{{ scheduled_reply_to_id }}"
+                                                          max_group_size: "{{ max_media_per_group }}"
+                                                          chunk_delay: "{{ telegram_media_delay }}"
+                                                          wait_for_response: false
+
+              # Combined Mode: Fetch from all albums and combine into one notification
+              # Distributes the limit evenly across albums (e.g., limit=10 with 2 albums = 5 each)
+              - conditions:
+                  - condition: template
+                    value_template: "{{ scheduled_assets_album_mode == 'combined' }}"
+                sequence:
+                  - variables:
+                      all_fetched_assets: []
+                      # Calculate per-album limit (round up to ensure we get enough, then trim later)
+                      album_count: "{{ album_id_entities | length }}"
+                      per_album_limit: "{{ ((scheduled_assets_limit | int / album_count | int) + 0.99) | int }}"
+
+                  # Fetch assets from each album with distributed limit
+                  - repeat:
+                      for_each: "{{ album_id_entities }}"
+                      sequence:
+                        # Build service data dynamically (omit optional params when not set)
+                        - variables:
+                            combined_get_assets_data: >
+                              {% set data = {
+                                'limit': per_album_limit | int,
+                                'favorite_only': scheduled_assets_favorite_only,
+                                'order_by': scheduled_assets_order_by,
+                                'order': scheduled_assets_order
+                              } %}
+                              {% if scheduled_assets_type != 'all' %}
+                                {% set data = dict(data, asset_type=scheduled_assets_type) %}
+                              {% endif %}
+                              {% if scheduled_assets_min_rating | int > 0 %}
+                                {% set data = dict(data, filter_min_rating=scheduled_assets_min_rating | int) %}
+                              {% endif %}
+                              {% if scheduled_assets_min_date | length > 0 %}
+                                {% set data = dict(data, min_date=scheduled_assets_min_date) %}
+                              {% endif %}
+                              {% if scheduled_assets_max_date | length > 0 %}
+                                {% set data = dict(data, max_date=scheduled_assets_max_date) %}
+                              {% endif %}
+                              {{ data }}
+
+                        - service: immich_album_watcher.get_assets
+                          response_variable: combined_fetch_response
+                          target:
+                            entity_id: "{{ repeat.item }}"
+                          data: "{{ combined_get_assets_data }}"
+
+                        - variables:
+                            album_assets: "{{ combined_fetch_response[repeat.item].assets | default([]) }}"
+                            all_fetched_assets: "{{ all_fetched_assets + album_assets }}"
+
+                  - variables:
+                      # Trim to the actual limit after combining from all albums
+                      all_fetched_assets: "{{ all_fetched_assets[:scheduled_assets_limit | int] }}"
+                      combined_asset_count: "{{ all_fetched_assets | length }}"
+                      # Build combined album names from all tracked albums
+                      combined_album_names: >
+                        {% set ns = namespace(names = []) %}
+                        {% for entity_id in album_id_entities %}
+                          {% set name_attr = state_attr(entity_id, 'album_name') %}
+                          {% set name = name_attr if name_attr not in [none, '', 'unknown', 'unavailable'] else states(entity_id) %}
+                          {% if name | length > 0 and name not in ['unknown', 'unavailable'] %}
+                            {% set ns.names = ns.names + [name] %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ ns.names | join(', ') }}
+
+                  # Only send if we got assets
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ combined_asset_count | int > 0 }}"
+                        sequence:
+                          # Format combined assets list
+                          - variables:
+                              combined_assets_list: >
+                                {% set ns = namespace(items = '') %}
+                                {% for asset in all_fetched_assets %}
+                                  {% set asset_template = message_asset_video_template if asset.type == 'VIDEO' else message_asset_image_template %}
+                                  {% set raw_date = asset.created_at | default('') %}
+                                  {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
+                                  {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+                                  {% set is_favorite = favorite_indicator_template if asset.is_favorite | default(false) else '' %}
+                                  {% set rating = asset.rating | default('') | string if asset.rating not in [none, ''] else '' %}
+                                  {% set item = asset_template
+                                    | replace('{filename}', asset.filename | default('Unknown'))
+                                    | replace('{description}', asset.description | default(''))
+                                    | replace('{type}', asset.type | default('Unknown'))
+                                    | replace('{created}', formatted_date)
+                                    | replace('{created_if_unique}', formatted_date)
+                                    | replace('{owner}', asset.owner | default('Unknown'))
+                                    | replace('{url}', asset.url | default(''))
+                                    | replace('{download_url}', asset.download_url | default(''))
+                                    | replace('{photo_url}', asset.photo_url | default(''))
+                                    | replace('{playback_url}', asset.playback_url | default(''))
+                                    | replace('{people}', (asset.people | default([])) | join(', '))
+                                    | replace('{album_name}', combined_album_names)
+                                    | replace('{is_favorite}', is_favorite)
+                                    | replace('{rating}', rating) %}
+                                  {% set ns.items = ns.items ~ item %}
+                                {% endfor %}
+                                {{ ns.items }}
+                              combined_message: >
+                                {{ scheduled_assets_message_template
+                                   | replace('{album_name}', combined_album_names)
+                                   | replace('{album_url}', '')
+                                   | replace('{asset_count}', combined_asset_count | string)
+                                   | replace('{assets}', combined_assets_list) }}
+
+                          # Send to notification targets
+                          - service: notify.send_message
+                            target:
+                              entity_id: "{{ notify_targets }}"
+                            data:
+                              message: "{{ combined_message }}"
+
+                          # Send to Telegram with media if configured
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ send_telegram_media and telegram_chat_ids | length > 0 and album_id_entities | length > 0 }}"
+                                sequence:
+                                  # Build combined media URLs
+                                  - variables:
+                                      combined_media_urls: >
+                                        {% set ns = namespace(items = []) %}
+                                        {% for asset in all_fetched_assets %}
+                                          {% set asset_type = asset.type | default('IMAGE') %}
+                                          {% set playback_url = asset.playback_url | default('') %}
+                                          {% set photo_url = asset.photo_url | default('') %}
+                                          {% set download_url = asset.download_url | default('') %}
+                                          {% set view_url = asset.url | default('') %}
+                                          {% if asset_type == 'VIDEO' and playback_url | length > 0 %}
+                                            {% set media_url = playback_url %}
+                                          {% elif asset_type == 'IMAGE' and photo_url | length > 0 %}
+                                            {% set media_url = photo_url %}
+                                          {% elif download_url | length > 0 %}
+                                            {% set media_url = download_url %}
+                                          {% else %}
+                                            {% set media_url = view_url %}
+                                          {% endif %}
+                                          {% if media_url | length > 0 %}
+                                            {% set media_type = 'video' if asset_type == 'VIDEO' else 'photo' %}
+                                            {% set item = {'url': media_url, 'type': media_type} %}
+                                            {% set ns.items = ns.items + [item] %}
+                                          {% endif %}
+                                        {% endfor %}
+                                        {{ ns.items }}
+
+                                  # Send to each Telegram chat
+                                  - repeat:
+                                      for_each: "{{ telegram_chat_ids }}"
+                                      sequence:
+                                        - service: immich_album_watcher.send_telegram_notification
+                                          response_variable: telegram_combined_text_response
+                                          target:
+                                            entity_id: "{{ album_id_entities[0] }}"
+                                          data:
+                                            chat_id: "{{ repeat.item }}"
+                                            caption: "{{ combined_message }}"
+                                            disable_web_page_preview: "{{ telegram_disable_url_preview }}"
+
+                                        - variables:
+                                            combined_reply_to_id: "{{ telegram_combined_text_response[album_id_entities[0]].message_id | default(0) | int }}"
+
+                                        - choose:
+                                            - conditions:
+                                                - condition: template
+                                                  value_template: "{{ combined_media_urls | length > 0 }}"
+                                              sequence:
+                                                - service: immich_album_watcher.send_telegram_notification
+                                                  response_variable: telegram_combined_media_response
+                                                  continue_on_error: true
+                                                  target:
+                                                    entity_id: "{{ album_id_entities[0] }}"
+                                                  data:
+                                                    chat_id: "{{ repeat.item }}"
+                                                    urls: "{{ combined_media_urls }}"
+                                                    reply_to_message_id: "{{ combined_reply_to_id }}"
+                                                    max_group_size: "{{ max_media_per_group }}"
+                                                    chunk_delay: "{{ telegram_media_delay }}"
+                                                    wait_for_response: false
+
+  # Stop here if this was a scheduled trigger - don't continue to event-based actions
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id in ['periodic_summary', 'scheduled_assets'] }}"
+        sequence:
+          - stop: "Scheduled notification sent"
 
   # ---------------------------------------------------------------------------
   # DEBUG: Log event data (enabled via Debug input section)

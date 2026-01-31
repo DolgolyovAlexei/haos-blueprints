@@ -1223,7 +1223,7 @@ action:
 
                 # Extract message ID for replies
                 - variables:
-                    reply_to_message_id: "{{ telegram_text_response.message_id | default(0) | int }}"
+                    reply_to_message_id: "{{ telegram_text_response[album_id_entities[0]].message_id | default(0) | int }}"
 
                 # Send media if we have URLs
                 - choose:
@@ -1241,8 +1241,8 @@ action:
                                   data:
                                     title: "Immich Album Watcher - Reply To Debug"
                                     message: >
-                                      **Reply To Message ID Debug:**
-                                      - Value: {{ reply_to_message_id }}
+                                      **Reply To Message Debug:**
+                                      - Value: {{ telegram_text_response }}
 
                         - service: immich_album_watcher.send_telegram_notification
                           response_variable: telegram_media_response

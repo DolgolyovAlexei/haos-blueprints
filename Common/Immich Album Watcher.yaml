@@ -55,6 +55,8 @@
 #   - `asset_download_url`: Direct download URL for the asset (preferred for Telegram images)
 #   - `asset_playback_url`: Playback/streaming URL for videos (preferred for Telegram videos)
 #   - `people`:             List of people detected in this specific asset
+#   - `asset_is_favorite`:  Whether the asset is marked as favorite (true or false)
+#   - `asset_rating`:       User rating of the asset (1-5 stars, or null if not rated)
 #
 # Message Template Variables:
 #   All message templates support these placeholder variables (use single braces):
@@ -70,15 +72,17 @@
 # Asset Item Template Variables (for image/video templates):
 #   These variables can be used in the image and video asset templates.
 #   Also used for Telegram media captions.
-#   - `{filename}`         - Original filename of the asset
-#   - `{description}`      - User-provided description of the asset
-#   - `{type}`             - Asset type (IMAGE or VIDEO)
-#   - `{created}`          - Creation date/time (always shown)
+#   - `{filename}`          - Original filename of the asset
+#   - `{description}`       - User-provided description of the asset
+#   - `{type}`              - Asset type (IMAGE or VIDEO)
+#   - `{created}`           - Creation date/time (always shown)
 #   - `{created_if_unique}` - Creation date/time formatted with template if dates differ, empty if all same
-#   - `{owner}`            - Owner display name
-#   - `{url}`              - Public URL to view the asset (empty if no shared link)
-#   - `{people}`           - People detected in this asset
-#   - `{album_name}`       - Name of the album
+#   - `{owner}`             - Owner display name
+#   - `{url}`               - Public URL to view the asset (empty if no shared link)
+#   - `{people}`            - People detected in this asset
+#   - `{album_name}`        - Name of the album
+#   - `{is_favorite}`       - Favorite indicator (using template) if asset is favorite, empty otherwise
+#   - `{rating}`            - User rating (1-5) or empty if not rated
 #
 # Telegram Media Attachments:
 #   When enabled, photos/videos are sent as media attachments to Telegram
@@ -321,7 +325,7 @@ blueprint:
           name: "Image Asset Template"
           description: >
             Template for IMAGE assets in the list. Also used for Telegram media captions.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{people}`, `{album_name}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`
           default: "\n  • 🖼️ {filename}"
           selector:
             text:
@@ -331,7 +335,7 @@ blueprint:
           name: "Video Asset Template"
           description: >
             Template for VIDEO assets in the list. Also used for Telegram media captions.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{people}`, `{album_name}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`
           default: "\n  • 🎬 {filename}"
           selector:
             text:
@@ -386,6 +390,16 @@ blueprint:
             Use `{date}` as the placeholder for the formatted date.
             Leave empty to just show the raw date without wrapper.
           default: " ({date})"
+          selector:
+            text:
+
+        favorite_indicator_template:
+          name: "Favorite Indicator Template"
+          description: >
+            Template for showing favorite indicator in asset items.
+            This will be shown when an asset is marked as favorite.
+            Leave empty to not show favorite indicators.
+          default: "❤️"
           selector:
             text:
 
@@ -491,6 +505,16 @@ blueprint:
           description: >
             Disable link previews in Telegram text messages.
             When enabled, URLs in the message won't show a preview card.
+          default: false
+          selector:
+            boolean:
+
+        telegram_send_large_photos_as_documents:
+          name: Send Large Photos as Documents
+          description: >
+            Send large photos as documents instead of compressed images.
+            This preserves the original quality but may result in larger file sizes.
+            Only applies to photos sent as Telegram media attachments.
           default: false
           selector:
             boolean:
@@ -660,6 +684,7 @@ variables:
   telegram_media_delay: !input telegram_media_delay
   telegram_video_warning_template: !input telegram_video_warning
   telegram_disable_url_preview: !input telegram_disable_url_preview
+  telegram_send_large_photos_as_documents: !input telegram_send_large_photos_as_documents
 
   # Periodic Summary Settings
   enable_periodic_summary: !input enable_periodic_summary
@@ -705,6 +730,7 @@ variables:
   date_format: !input date_format
   common_date_template: !input common_date_template
   date_if_unique_template: !input date_if_unique_template
+  favorite_indicator_template: !input favorite_indicator_template
 
   # ---------------------------------------------------------------------------
   # Event Data
@@ -792,6 +818,8 @@ variables:
         {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
         {% set formatted_date = dt.strftime(date_format) if dt else '' %}
         {% set created_if_unique = '' if unique_dates | length == 1 else (date_if_unique_template | replace('{date}', formatted_date)) %}
+        {% set is_favorite = favorite_indicator_template if asset.asset_is_favorite | default(false) else '' %}
+        {% set rating = asset.asset_rating | default('') | string if asset.asset_rating not in [none, ''] else '' %}
         {% set item = asset_template
           | replace('{filename}', asset.asset_filename | default('Unknown'))
           | replace('{description}', asset.asset_description | default(''))
@@ -801,7 +829,9 @@ variables:
           | replace('{owner}', asset.asset_owner | default('Unknown'))
           | replace('{url}', asset.asset_url | default(''))
           | replace('{people}', (asset.people | default([])) | join(', '))
-          | replace('{album_name}', event_album_name) %}
+          | replace('{album_name}', event_album_name)
+          | replace('{is_favorite}', is_favorite)
+          | replace('{rating}', rating) %}
         {% set ns.items = ns.items ~ item %}
       {% endfor %}
       {% set more_count = filtered_assets | length - max_items %}
@@ -1324,4 +1354,5 @@ action:
                             reply_to_message_id: "{{ reply_to_message_id }}"
                             max_group_size: "{{ max_media_per_group }}"
                             chunk_delay: "{{ telegram_media_delay }}"
+                            send_large_photos_as_documents: "{{ telegram_send_large_photos_as_documents }}"
                             wait_for_response: false

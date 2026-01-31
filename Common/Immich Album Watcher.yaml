@@ -88,20 +88,9 @@
 #
 #   Media Group Mode (Album):
 #   - Sends multiple photos/videos grouped together as a Telegram album
-#   - Requires additional setup: add rest_command to configuration.yaml:
-#
-#     rest_command:
-#       immich_album_watcher_telegram_send_media_group:
-#         url: "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMediaGroup"
-#         method: POST
-#         timeout: 30
-#         content_type: "application/json"
-#         payload: '{"chat_id": {{ chat_id }}, "media": {{ media | to_json }}, "reply_to_message_id": {{ reply_to_message_id }}}'
-#
-#   - Replace <YOUR_BOT_TOKEN> with your actual bot token from BotFather
-#   - TIP: Use secrets.yaml for the URL: url: !secret telegram_bot_send_media_group_url
+#   - Uses the immich_album_watcher.send_telegram_media_group service
+#   - Requires Telegram bot token to be configured in the Immich Album Watcher integration
 #   - Media groups support 2-10 items (Telegram limit)
-#   - IMPORTANT: The timeout: 30 prevents HA from hanging if Telegram is slow
 #
 #   Limitations:
 #   - Only assets with valid public URLs will be sent
@@ -456,19 +445,8 @@ blueprint:
           name: Send as Media Group (Album)
           description: >
             Send multiple photos/videos as a grouped album instead of individual messages.
-            REQUIRES additional setup - add this to your configuration.yaml:
-
-            rest_command:
-              immich_album_watcher_telegram_send_media_group:
-                url: "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMediaGroup"
-                method: POST
-                timeout: 30
-                content_type: "application/json"
-                payload: '{"chat_id": {{ chat_id }}, "media": {{ media | to_json }}, "reply_to_message_id": {{ reply_to_message_id }}}'
-
-            Replace <YOUR_BOT_TOKEN> with your actual bot token from BotFather.
-            TIP: Store the full URL in secrets.yaml and use: url: !secret telegram_bot_send_media_group_url
-            IMPORTANT: timeout: 30 prevents HA from hanging if Telegram is slow.
+            Uses the immich_album_watcher.send_telegram_media_group service.
+            REQUIRES: Telegram bot token configured in the Immich Album Watcher integration options.
             Telegram limits media groups to 2-10 items.
           default: false
           selector:
@@ -1111,9 +1089,9 @@ action:
                 # Choose between media group (album) or individual messages
                 - choose:
                     # ---------------------------------------------------------
-                    # OPTION 1: Send as Media Group (Album) via REST API
+                    # OPTION 1: Send as Media Group (Album) via Immich integration
                     # ---------------------------------------------------------
-                    # Requires: rest_command.immich_album_watcher_telegram_send_media_group
+                    # Uses immich_album_watcher.send_telegram_media_group service
                     # Telegram limits: 2-10 media items per group
                     - conditions:
                         - condition: template
@@ -1135,8 +1113,8 @@ action:
                                   group_index: "{{ repeat.index - 1 }}"
                                   start_idx: "{{ (group_index | int) * (group_size | int) }}"
                                   end_idx: "{{ [(start_idx | int) + (group_size | int), total_items | int] | min }}"
-                                  # Build JSON array for this group
-                                  media_group_json: >
+                                  # Build urls list for this group
+                                  media_group_urls: >
                                     {% set ns = namespace(items = []) %}
                                     {% set items_to_send = media_to_send[start_idx | int:end_idx | int] %}
                                     {% for asset in items_to_send %}
@@ -1152,10 +1130,10 @@ action:
                                         {% set media_url = view_url %}
                                       {% endif %}
                                       {% set media_type = 'video' if asset_type == 'VIDEO' else 'photo' %}
-                                      {% set item = {'type': media_type, 'media': media_url} %}
+                                      {% set item = {'url': media_url, 'type': media_type} %}
                                       {% set ns.items = ns.items + [item] %}
                                     {% endfor %}
-                                    {{ ns.items | to_json }}
+                                    {{ ns.items }}
 
                               # Only send if group has at least 2 items (Telegram requirement)
                               - choose:
@@ -1163,12 +1141,15 @@ action:
                                       - condition: template
                                         value_template: "{{ (end_idx | int) - (start_idx | int) >= 2 }}"
                                     sequence:
-                                      - service: rest_command.immich_album_watcher_telegram_send_media_group
+                                      - service: immich_album_watcher.send_telegram_media_group
                                         continue_on_error: true
+                                        response_variable: media_group_response
+                                        target:
+                                          entity_id: "{{ album_id_entities[0] if album_id_entities | length > 0 else '' }}"
                                         data:
-                                          chat_id: "{{ current_chat_id }}"
-                                          media: "{{ media_group_json }}"
-                                          reply_to_message_id: "{{ reply_to_message_id if reply_to_message_id > 0 else 0 }}"
+                                          chat_id: "{{ current_chat_id | string }}"
+                                          urls: "{{ media_group_urls }}"
+                                          reply_to_message_id: "{{ reply_to_message_id if reply_to_message_id > 0 else omit }}"
 
                                       # Small delay between groups to avoid rate limiting
                                       - choose:

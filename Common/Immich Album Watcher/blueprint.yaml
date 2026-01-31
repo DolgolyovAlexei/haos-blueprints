@@ -198,7 +198,7 @@ blueprint:
           name: "Image Asset Template"
           description: >
             Template for IMAGE assets in the list. Also used for Telegram media captions.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{download_url}`, `{photo_url}`, `{playback_url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{download_url}`, `{photo_url}`, `{playback_url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`, `{location}`, `{location_if_unique}`, `{city}`, `{state}`, `{country}`
           default: "\n  • 🖼️ {filename}"
           selector:
             text:
@@ -208,7 +208,7 @@ blueprint:
           name: "Video Asset Template"
           description: >
             Template for VIDEO assets in the list. Also used for Telegram media captions.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{download_url}`, `{photo_url}`, `{playback_url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{download_url}`, `{photo_url}`, `{playback_url}`, `{people}`, `{album_name}`, `{is_favorite}`, `{rating}`, `{location}`, `{location_if_unique}`, `{city}`, `{state}`, `{country}`
           default: "\n  • 🎬 {filename}"
           selector:
             text:

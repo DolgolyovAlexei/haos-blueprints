@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Home Assistant Community
+    url: https://community.home-assistant.io/
+    about: Ask questions about Home Assistant
+  - name: Home Assistant Blueprint Documentation
+    url: https://www.home-assistant.io/docs/automation/using_blueprints/
+    about: Learn about using blueprints

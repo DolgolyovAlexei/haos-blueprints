@@ -65,18 +65,20 @@
 #   - `{people}`         - Comma-separated list of people detected
 #   - `{assets}`         - Formatted list of added assets (using asset item template)
 #   - `{video_warning}`  - Warning about video size limits (Telegram only, empty otherwise)
+#   - `{common_date}`    - Common date formatted with template if all assets share same date, empty otherwise
 #
 # Asset Item Template Variables (for image/video templates):
 #   These variables can be used in the image and video asset templates.
 #   Also used for Telegram media captions.
-#   - `{filename}`      - Original filename of the asset
-#   - `{description}`   - User-provided description of the asset
-#   - `{type}`          - Asset type (IMAGE or VIDEO)
-#   - `{created}`       - Creation date/time
-#   - `{owner}`         - Owner display name
-#   - `{url}`           - Public URL to view the asset (empty if no shared link)
-#   - `{people}`        - People detected in this asset
-#   - `{album_name}`    - Name of the album
+#   - `{filename}`         - Original filename of the asset
+#   - `{description}`      - User-provided description of the asset
+#   - `{type}`             - Asset type (IMAGE or VIDEO)
+#   - `{created}`          - Creation date/time (always shown)
+#   - `{created_if_unique}` - Creation date/time formatted with template if dates differ, empty if all same
+#   - `{owner}`            - Owner display name
+#   - `{url}`              - Public URL to view the asset (empty if no shared link)
+#   - `{people}`           - People detected in this asset
+#   - `{album_name}`       - Name of the album
 #
 # Telegram Media Attachments:
 #   When enabled, photos/videos are sent as media attachments to Telegram
@@ -115,6 +117,11 @@
 #   Album Item Template Variables:
 #   - `{album_name}`    - Name of the album
 #   - `{album_url}`     - Share URL for the album
+#
+#   Testing Periodic Summary:
+#   To test the periodic summary without waiting for the scheduled time,
+#   fire this event from Developer Tools > Events:
+#   Event type: immich_album_watcher_test_periodic_summary
 #
 # Author: Alexei Dolgolyov (dolgolyov.alexei@gmail.com)
 # =============================================================================
@@ -263,7 +270,7 @@ blueprint:
           name: "Assets Added Message"
           description: >
             Message sent when assets are added to an album.
-            Variables: `{album_name}`, `{album_url}`, `{added_count}`, `{people}`, `{assets}`, `{video_warning}`
+            Variables: `{album_name}`, `{album_url}`, `{added_count}`, `{people}`, `{assets}`, `{video_warning}`, `{common_date}`
           default: "📷 {added_count} new photo(s) added to album \"{album_name}\".{people}{assets}{video_warning}"
           selector:
             text:
@@ -314,7 +321,7 @@ blueprint:
           name: "Image Asset Template"
           description: >
             Template for IMAGE assets in the list. Also used for Telegram media captions.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`, `{album_name}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{people}`, `{album_name}`
           default: "\n  • 🖼️ {filename}"
           selector:
             text:
@@ -324,7 +331,7 @@ blueprint:
           name: "Video Asset Template"
           description: >
             Template for VIDEO assets in the list. Also used for Telegram media captions.
-            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{owner}`, `{url}`, `{people}`, `{album_name}`
+            Variables: `{filename}`, `{description}`, `{type}`, `{created}`, `{created_if_unique}`, `{owner}`, `{url}`, `{people}`, `{album_name}`
           default: "\n  • 🎬 {filename}"
           selector:
             text:
@@ -359,6 +366,26 @@ blueprint:
             Note: Month names (%b, %B) use system locale (typically English).
             Use numeric format (%m) for locale-independent dates.
           default: "%d.%m.%Y, %H:%M UTC"
+          selector:
+            text:
+
+        common_date_template:
+          name: "Common Date Template"
+          description: >
+            Template for showing the common date in the header message when all assets share the same date.
+            Use `{date}` as the placeholder for the formatted date.
+            Leave empty to just show the raw date without wrapper.
+          default: " from {date}"
+          selector:
+            text:
+
+        date_if_unique_template:
+          name: "Date If Unique Template"
+          description: >
+            Template for showing dates in asset items when assets have different dates.
+            Use `{date}` as the placeholder for the formatted date.
+            Leave empty to just show the raw date without wrapper.
+          default: " ({date})"
           selector:
             text:
 
@@ -584,6 +611,13 @@ trigger:
     hours: "/1"
     id: "periodic_summary"
 
+  # Manual trigger for testing periodic summary
+  # Fire this event from Developer Tools > Events to test periodic summary immediately
+  # Event type: immich_album_watcher_test_periodic_summary
+  - platform: event
+    event_type: immich_album_watcher_test_periodic_summary
+    id: "periodic_summary"
+
 # =============================================================================
 # VARIABLES
 # =============================================================================
@@ -669,6 +703,8 @@ variables:
   message_assets_format_template: !input message_assets_format
   message_assets_more_template: !input message_assets_more
   date_format: !input date_format
+  common_date_template: !input common_date_template
+  date_if_unique_template: !input date_if_unique_template
 
   # ---------------------------------------------------------------------------
   # Event Data
@@ -720,6 +756,30 @@ variables:
   # Count of filtered assets (for notifications)
   filtered_added_count: "{{ filtered_assets | length }}"
 
+  # Compute unique dates from filtered assets
+  unique_dates: >
+    {% set ns = namespace(dates = []) %}
+    {% for asset in filtered_assets %}
+      {% set raw_date = asset.asset_created | default('') %}
+      {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
+      {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+      {% if formatted_date | length > 0 and formatted_date not in ns.dates %}
+        {% set ns.dates = ns.dates + [formatted_date] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.dates }}
+
+  # Check if all assets share the same date
+  all_dates_same: "{{ unique_dates | length == 1 }}"
+
+  # Common date for header (formatted with template if all same, empty otherwise)
+  common_date: >
+    {% if unique_dates | length == 1 %}
+      {{ common_date_template | replace('{date}', unique_dates[0]) }}
+    {% else %}
+      {{ '' }}
+    {% endif %}
+
   # Format assets list for notification
   assets_list: >
     {% if include_asset_details and filtered_assets | length > 0 %}
@@ -731,11 +791,13 @@ variables:
         {% set raw_date = asset.asset_created | default('') %}
         {% set dt = raw_date | as_datetime(none) if raw_date | length > 0 else none %}
         {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+        {% set created_if_unique = '' if unique_dates | length == 1 else (date_if_unique_template | replace('{date}', formatted_date)) %}
         {% set item = asset_template
           | replace('{filename}', asset.asset_filename | default('Unknown'))
           | replace('{description}', asset.asset_description | default(''))
           | replace('{type}', asset.asset_type | default('Unknown'))
           | replace('{created}', formatted_date)
+          | replace('{created_if_unique}', created_if_unique)
           | replace('{owner}', asset.asset_owner | default('Unknown'))
           | replace('{url}', asset.asset_url | default(''))
           | replace('{people}', (asset.people | default([])) | join(', '))
@@ -803,12 +865,17 @@ variables:
   # Formula: (current_hour - start_hour) % interval == 0
   # Example: start_hour=12, interval=24 → sends at 12:00 daily
   # Example: start_hour=9, interval=12 → sends at 09:00 and 21:00
+  # Manual test event (immich_album_watcher_test_periodic_summary) bypasses time check
   should_send_periodic_summary: >
     {% if trigger.id == 'periodic_summary' and enable_periodic_summary %}
-      {% set current_hour = now().hour %}
-      {% set start = periodic_start_hour | int %}
-      {% set interval = periodic_interval_hours | int %}
-      {{ (current_hour - start) % interval == 0 }}
+      {% if trigger.platform == 'event' and trigger.event.event_type == 'immich_album_watcher_test_periodic_summary' %}
+        {{ true }}
+      {% else %}
+        {% set current_hour = now().hour %}
+        {% set start = periodic_start_hour | int %}
+        {% set interval = periodic_interval_hours | int %}
+        {{ (current_hour - start) % interval == 0 }}
+      {% endif %}
     {% else %}
       {{ false }}
     {% endif %}
@@ -958,7 +1025,8 @@ action:
                        | replace('{added_count}', filtered_added_count | string)
                        | replace('{people}', people_list)
                        | replace('{assets}', assets_list)
-                       | replace('{video_warning}', video_warning_text) }}
+                       | replace('{video_warning}', video_warning_text)
+                       | replace('{common_date}', common_date) }}
 
           - service: notify.send_message
             target:
@@ -1180,7 +1248,8 @@ action:
                        | replace('{added_count}', filtered_added_count | string)
                        | replace('{people}', people_list)
                        | replace('{assets}', assets_list)
-                       | replace('{video_warning}', video_warning_text) }}
+                       | replace('{video_warning}', video_warning_text)
+                       | replace('{common_date}', common_date) }}
 
               # Build URLs list for media
               # URL preference: playback_url (videos) > download_url > asset_url

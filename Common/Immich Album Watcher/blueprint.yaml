@@ -901,9 +901,9 @@ variables:
   unique_locations: >
     {% set ns = namespace(locations = []) %}
     {% for asset in filtered_assets %}
-      {% set city = asset.city | default('') %}
-      {% set state = asset.state | default('') %}
-      {% set country = asset.country | default('') %}
+      {% set city = asset.city | default('', true) %}
+      {% set state = asset.state | default('', true) %}
+      {% set country = asset.country | default('', true) %}
       {% if city | length > 0 and state | length > 0 and country | length > 0 %}
         {% set formatted_location = location_format | replace('{city}', city) | replace('{state}', state) | replace('{country}', country) %}
         {% if formatted_location not in ns.locations %}
@@ -920,9 +920,9 @@ variables:
   all_assets_have_location: >
     {% set ns = namespace(count = 0) %}
     {% for asset in filtered_assets %}
-      {% set city = asset.city | default('') %}
-      {% set state = asset.state | default('') %}
-      {% set country = asset.country | default('') %}
+      {% set city = asset.city | default('', true) %}
+      {% set state = asset.state | default('', true) %}
+      {% set country = asset.country | default('', true) %}
       {% if city | length > 0 and state | length > 0 and country | length > 0 %}
         {% set ns.count = ns.count + 1 %}
       {% endif %}
@@ -951,9 +951,9 @@ variables:
         {% set created_if_unique = '' if unique_dates | length == 1 else (date_if_unique_template | replace('{date}', formatted_date)) %}
         {% set is_favorite = favorite_indicator_template if asset.is_favorite | default(false) else '' %}
         {% set rating = asset.rating | default('') | string if asset.rating not in [none, ''] else '' %}
-        {% set city = asset.city | default('') %}
-        {% set state = asset.state | default('') %}
-        {% set country = asset.country | default('') %}
+        {% set city = asset.city | default('', true) %}
+        {% set state = asset.state | default('', true) %}
+        {% set country = asset.country | default('', true) %}
         {% set has_full_location = city | length > 0 and state | length > 0 and country | length > 0 %}
         {% set formatted_location = location_format | replace('{city}', city) | replace('{state}', state) | replace('{country}', country) if has_full_location else '' %}
         {% set location_if_unique = '' if (not has_full_location) or (all_assets_have_location and unique_locations | length == 1) else (location_if_unique_template | replace('{location}', formatted_location)) %}
@@ -1218,10 +1218,10 @@ action:
                               {% if scheduled_assets_min_rating | int > 0 %}
                                 {% set data = dict(data, filter_min_rating=scheduled_assets_min_rating | int) %}
                               {% endif %}
-                              {% if scheduled_assets_min_date | length > 0 %}
+                              {% if (scheduled_assets_min_date | default('')) | length > 0 %}
                                 {% set data = dict(data, min_date=scheduled_assets_min_date) %}
                               {% endif %}
-                              {% if scheduled_assets_max_date | length > 0 %}
+                              {% if (scheduled_assets_max_date | default('')) | length > 0 %}
                                 {% set data = dict(data, max_date=scheduled_assets_max_date) %}
                               {% endif %}
                               {{ data }}
@@ -1252,19 +1252,21 @@ action:
                                         {% set raw_date = asset.created_at | default('', true) %}
                                         {% set dt = raw_date | as_datetime(none) if raw_date is string and raw_date | length > 0 else none %}
                                         {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+                                        {% set created_if_unique = date_if_unique_template | replace('{date}', formatted_date) if formatted_date | length > 0 else '' %}
                                         {% set is_favorite = favorite_indicator_template if asset.is_favorite | default(false) else '' %}
                                         {% set rating = asset.rating | default('') | string if asset.rating not in [none, ''] else '' %}
-                                        {% set city = asset.city | default('') %}
-                                        {% set state = asset.state | default('') %}
-                                        {% set country = asset.country | default('') %}
+                                        {% set city = asset.city | default('', true) %}
+                                        {% set state = asset.state | default('', true) %}
+                                        {% set country = asset.country | default('', true) %}
                                         {% set has_full_location = city | length > 0 and state | length > 0 and country | length > 0 %}
                                         {% set formatted_location = location_format | replace('{city}', city) | replace('{state}', state) | replace('{country}', country) if has_full_location else '' %}
+                                        {% set location_if_unique = location_if_unique_template | replace('{location}', formatted_location) if has_full_location else '' %}
                                         {% set item = asset_template
                                           | replace('{filename}', asset.filename | default('Unknown'))
                                           | replace('{description}', asset.description | default(''))
                                           | replace('{type}', asset.type | default('Unknown'))
                                           | replace('{created}', formatted_date)
-                                          | replace('{created_if_unique}', formatted_date)
+                                          | replace('{created_if_unique}', created_if_unique)
                                           | replace('{owner}', asset.owner | default('Unknown'))
                                           | replace('{url}', asset.url | default(''))
                                           | replace('{download_url}', asset.download_url | default(''))
@@ -1275,7 +1277,7 @@ action:
                                           | replace('{is_favorite}', is_favorite)
                                           | replace('{rating}', rating)
                                           | replace('{location}', formatted_location)
-                                          | replace('{location_if_unique}', formatted_location)
+                                          | replace('{location_if_unique}', location_if_unique)
                                           | replace('{city}', city)
                                           | replace('{state}', state)
                                           | replace('{country}', country) %}
@@ -1397,10 +1399,10 @@ action:
                               {% if scheduled_assets_min_rating | int > 0 %}
                                 {% set data = dict(data, filter_min_rating=scheduled_assets_min_rating | int) %}
                               {% endif %}
-                              {% if scheduled_assets_min_date | length > 0 %}
+                              {% if (scheduled_assets_min_date | default('')) | length > 0 %}
                                 {% set data = dict(data, min_date=scheduled_assets_min_date) %}
                               {% endif %}
-                              {% if scheduled_assets_max_date | length > 0 %}
+                              {% if (scheduled_assets_max_date | default('')) | length > 0 %}
                                 {% set data = dict(data, max_date=scheduled_assets_max_date) %}
                               {% endif %}
                               {{ data }}
@@ -1446,19 +1448,21 @@ action:
                                   {% set raw_date = asset.created_at | default('', true) %}
                                   {% set dt = raw_date | as_datetime(none) if raw_date is string and raw_date | length > 0 else none %}
                                   {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+                                  {% set created_if_unique = date_if_unique_template | replace('{date}', formatted_date) if formatted_date | length > 0 else '' %}
                                   {% set is_favorite = favorite_indicator_template if asset.is_favorite | default(false) else '' %}
                                   {% set rating = asset.rating | default('') | string if asset.rating not in [none, ''] else '' %}
-                                  {% set city = asset.city | default('') %}
-                                  {% set state = asset.state | default('') %}
-                                  {% set country = asset.country | default('') %}
+                                  {% set city = asset.city | default('', true) %}
+                                  {% set state = asset.state | default('', true) %}
+                                  {% set country = asset.country | default('', true) %}
                                   {% set has_full_location = city | length > 0 and state | length > 0 and country | length > 0 %}
                                   {% set formatted_location = location_format | replace('{city}', city) | replace('{state}', state) | replace('{country}', country) if has_full_location else '' %}
+                                  {% set location_if_unique = location_if_unique_template | replace('{location}', formatted_location) if has_full_location else '' %}
                                   {% set item = asset_template
                                     | replace('{filename}', asset.filename | default('Unknown'))
                                     | replace('{description}', asset.description | default(''))
                                     | replace('{type}', asset.type | default('Unknown'))
                                     | replace('{created}', formatted_date)
-                                    | replace('{created_if_unique}', formatted_date)
+                                    | replace('{created_if_unique}', created_if_unique)
                                     | replace('{owner}', asset.owner | default('Unknown'))
                                     | replace('{url}', asset.url | default(''))
                                     | replace('{download_url}', asset.download_url | default(''))
@@ -1469,7 +1473,7 @@ action:
                                     | replace('{is_favorite}', is_favorite)
                                     | replace('{rating}', rating)
                                     | replace('{location}', formatted_location)
-                                    | replace('{location_if_unique}', formatted_location)
+                                    | replace('{location_if_unique}', location_if_unique)
                                     | replace('{city}', city)
                                     | replace('{state}', state)
                                     | replace('{country}', country) %}

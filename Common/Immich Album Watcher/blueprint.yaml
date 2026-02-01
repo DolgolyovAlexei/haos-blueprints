@@ -1407,7 +1407,7 @@ action:
                       all_fetched_assets: []
                       # Calculate per-album limit (use floor division for even distribution, minimum 1)
                       album_count: "{{ album_id_entities | length }}"
-                      per_album_limit: "{{ [(scheduled_assets_limit | int // album_count | int), 1] | max if album_count | int > 0 else scheduled_assets_limit | int }}"
+                      per_album_limit: "{{ [((scheduled_assets_limit | int) // (album_count | int)), 1] | max if album_count | int > 0 else scheduled_assets_limit | int }}"
 
                   # Fetch assets from each album with distributed limit
                   - repeat:

@@ -629,7 +629,9 @@ blueprint:
           name: Message Template
           description: >
             Message template for scheduled asset notifications.
-            Variables: `{album_name}`, `{album_url}`, `{asset_count}`, `{assets}`
+            Variables: `{album_name}`, `{album_url}`, `{asset_count}`, `{assets}`, `{common_date}`, `{common_location}`.
+            `{common_date}` shows the date when all assets share the same date.
+            `{common_location}` shows the location when all assets share the same location.
           default: "📸 Here are some photos from album \"{album_name}\":{assets}"
           selector:
             text:
@@ -889,14 +891,6 @@ variables:
   # Check if all assets share the same date
   all_dates_same: "{{ unique_dates | length == 1 }}"
 
-  # Common date for header (formatted with template if all same, empty otherwise)
-  common_date: >
-    {% if unique_dates | length == 1 %}
-      {{ common_date_template | replace('{date}', unique_dates[0]) }}
-    {% else %}
-      {{ '' }}
-    {% endif %}
-
   # Compute unique locations from filtered assets (only when all location fields present)
   unique_locations: >
     {% set ns = namespace(locations = []) %}
@@ -928,14 +922,6 @@ variables:
       {% endif %}
     {% endfor %}
     {{ ns.count == filtered_assets | length and filtered_assets | length > 0 }}
-
-  # Common location for header (formatted with template if all same, empty otherwise)
-  common_location: >
-    {% if all_assets_have_location and unique_locations | length == 1 %}
-      {{ common_location_template | replace('{location}', unique_locations[0]) }}
-    {% else %}
-      {{ '' }}
-    {% endif %}
 
   # Format assets list for notification
   assets_list: >
@@ -1245,6 +1231,45 @@ action:
                               sequence:
                                 # Format assets list using asset templates
                                 - variables:
+                                    # Compute unique dates from fetched assets
+                                    scheduled_unique_dates: >
+                                      {% set ns = namespace(dates = []) %}
+                                      {% for asset in fetched_assets %}
+                                        {% set raw_date = asset.created_at | default('', true) %}
+                                        {% set dt = raw_date | as_datetime(none) if raw_date is string and raw_date | length > 0 else none %}
+                                        {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+                                        {% if formatted_date | length > 0 and formatted_date not in ns.dates %}
+                                          {% set ns.dates = ns.dates + [formatted_date] %}
+                                        {% endif %}
+                                      {% endfor %}
+                                      {{ ns.dates }}
+                                    # Compute unique locations from fetched assets
+                                    scheduled_unique_locations: >
+                                      {% set ns = namespace(locations = []) %}
+                                      {% for asset in fetched_assets %}
+                                        {% set city = asset.city | default('', true) %}
+                                        {% set state = asset.state | default('', true) %}
+                                        {% set country = asset.country | default('', true) %}
+                                        {% if city | length > 0 and state | length > 0 and country | length > 0 %}
+                                          {% set formatted_location = location_format | replace('{city}', city) | replace('{state}', state) | replace('{country}', country) %}
+                                          {% if formatted_location not in ns.locations %}
+                                            {% set ns.locations = ns.locations + [formatted_location] %}
+                                          {% endif %}
+                                        {% endif %}
+                                      {% endfor %}
+                                      {{ ns.locations }}
+                                    # Check if all fetched assets have complete location data
+                                    scheduled_all_assets_have_location: >
+                                      {% set ns = namespace(count = 0) %}
+                                      {% for asset in fetched_assets %}
+                                        {% set city = asset.city | default('', true) %}
+                                        {% set state = asset.state | default('', true) %}
+                                        {% set country = asset.country | default('', true) %}
+                                        {% if city | length > 0 and state | length > 0 and country | length > 0 %}
+                                          {% set ns.count = ns.count + 1 %}
+                                        {% endif %}
+                                      {% endfor %}
+                                      {{ ns.count == fetched_assets | length and fetched_assets | length > 0 }}
                                     scheduled_assets_list: >
                                       {% set ns = namespace(items = '') %}
                                       {% for asset in fetched_assets %}
@@ -1252,7 +1277,7 @@ action:
                                         {% set raw_date = asset.created_at | default('', true) %}
                                         {% set dt = raw_date | as_datetime(none) if raw_date is string and raw_date | length > 0 else none %}
                                         {% set formatted_date = dt.strftime(date_format) if dt else '' %}
-                                        {% set created_if_unique = date_if_unique_template | replace('{date}', formatted_date) if formatted_date | length > 0 else '' %}
+                                        {% set created_if_unique = '' if scheduled_unique_dates | length == 1 else (date_if_unique_template | replace('{date}', formatted_date) if formatted_date | length > 0 else '') %}
                                         {% set is_favorite = favorite_indicator_template if asset.is_favorite | default(false) else '' %}
                                         {% set rating = asset.rating | default('') | string if asset.rating not in [none, ''] else '' %}
                                         {% set city = asset.city | default('', true) %}
@@ -1260,7 +1285,7 @@ action:
                                         {% set country = asset.country | default('', true) %}
                                         {% set has_full_location = city | length > 0 and state | length > 0 and country | length > 0 %}
                                         {% set formatted_location = location_format | replace('{city}', city) | replace('{state}', state) | replace('{country}', country) if has_full_location else '' %}
-                                        {% set location_if_unique = location_if_unique_template | replace('{location}', formatted_location) if has_full_location else '' %}
+                                        {% set location_if_unique = '' if (not has_full_location) or (scheduled_all_assets_have_location and scheduled_unique_locations | length == 1) else (location_if_unique_template | replace('{location}', formatted_location)) %}
                                         {% set item = asset_template
                                           | replace('{filename}', asset.filename | default('Unknown'))
                                           | replace('{description}', asset.description | default(''))
@@ -1284,11 +1309,15 @@ action:
                                         {% set ns.items = ns.items ~ item %}
                                       {% endfor %}
                                       {{ ns.items }}
-                                    scheduled_message: >
+                                    scheduled_message: >-
+                                      {%- set sched_common_date = (common_date_template | replace('{date}', scheduled_unique_dates[0])) if scheduled_unique_dates | length == 1 else '' -%}
+                                      {%- set sched_common_location = (common_location_template | replace('{location}', scheduled_unique_locations[0])) if scheduled_all_assets_have_location and scheduled_unique_locations | length == 1 else '' -%}
                                       {{ scheduled_assets_message_template
                                          | replace('{album_name}', current_album_name)
                                          | replace('{album_url}', current_album_url)
                                          | replace('{asset_count}', fetched_asset_count | string)
+                                         | replace('{common_date}', sched_common_date)
+                                         | replace('{common_location}', sched_common_location)
                                          | replace('{assets}', scheduled_assets_list) }}
 
                                 # Send to notification targets
@@ -1376,9 +1405,9 @@ action:
                 sequence:
                   - variables:
                       all_fetched_assets: []
-                      # Calculate per-album limit (round up to ensure we get enough, then trim later)
+                      # Calculate per-album limit (use floor division for even distribution, minimum 1)
                       album_count: "{{ album_id_entities | length }}"
-                      per_album_limit: "{{ ((scheduled_assets_limit | int / album_count | int) + 0.99) | int }}"
+                      per_album_limit: "{{ [(scheduled_assets_limit | int // album_count | int), 1] | max if album_count | int > 0 else scheduled_assets_limit | int }}"
 
                   # Fetch assets from each album with distributed limit
                   - repeat:
@@ -1441,6 +1470,45 @@ action:
                         sequence:
                           # Format combined assets list
                           - variables:
+                              # Compute unique dates from all fetched assets
+                              combined_unique_dates: >
+                                {% set ns = namespace(dates = []) %}
+                                {% for asset in all_fetched_assets %}
+                                  {% set raw_date = asset.created_at | default('', true) %}
+                                  {% set dt = raw_date | as_datetime(none) if raw_date is string and raw_date | length > 0 else none %}
+                                  {% set formatted_date = dt.strftime(date_format) if dt else '' %}
+                                  {% if formatted_date | length > 0 and formatted_date not in ns.dates %}
+                                    {% set ns.dates = ns.dates + [formatted_date] %}
+                                  {% endif %}
+                                {% endfor %}
+                                {{ ns.dates }}
+                              # Compute unique locations from all fetched assets
+                              combined_unique_locations: >
+                                {% set ns = namespace(locations = []) %}
+                                {% for asset in all_fetched_assets %}
+                                  {% set city = asset.city | default('', true) %}
+                                  {% set state = asset.state | default('', true) %}
+                                  {% set country = asset.country | default('', true) %}
+                                  {% if city | length > 0 and state | length > 0 and country | length > 0 %}
+                                    {% set formatted_location = location_format | replace('{city}', city) | replace('{state}', state) | replace('{country}', country) %}
+                                    {% if formatted_location not in ns.locations %}
+                                      {% set ns.locations = ns.locations + [formatted_location] %}
+                                    {% endif %}
+                                  {% endif %}
+                                {% endfor %}
+                                {{ ns.locations }}
+                              # Check if all fetched assets have complete location data
+                              combined_all_assets_have_location: >
+                                {% set ns = namespace(count = 0) %}
+                                {% for asset in all_fetched_assets %}
+                                  {% set city = asset.city | default('', true) %}
+                                  {% set state = asset.state | default('', true) %}
+                                  {% set country = asset.country | default('', true) %}
+                                  {% if city | length > 0 and state | length > 0 and country | length > 0 %}
+                                    {% set ns.count = ns.count + 1 %}
+                                  {% endif %}
+                                {% endfor %}
+                                {{ ns.count == all_fetched_assets | length and all_fetched_assets | length > 0 }}
                               combined_assets_list: >
                                 {% set ns = namespace(items = '') %}
                                 {% for asset in all_fetched_assets %}
@@ -1448,7 +1516,7 @@ action:
                                   {% set raw_date = asset.created_at | default('', true) %}
                                   {% set dt = raw_date | as_datetime(none) if raw_date is string and raw_date | length > 0 else none %}
                                   {% set formatted_date = dt.strftime(date_format) if dt else '' %}
-                                  {% set created_if_unique = date_if_unique_template | replace('{date}', formatted_date) if formatted_date | length > 0 else '' %}
+                                  {% set created_if_unique = '' if combined_unique_dates | length == 1 else (date_if_unique_template | replace('{date}', formatted_date) if formatted_date | length > 0 else '') %}
                                   {% set is_favorite = favorite_indicator_template if asset.is_favorite | default(false) else '' %}
                                   {% set rating = asset.rating | default('') | string if asset.rating not in [none, ''] else '' %}
                                   {% set city = asset.city | default('', true) %}
@@ -1456,7 +1524,7 @@ action:
                                   {% set country = asset.country | default('', true) %}
                                   {% set has_full_location = city | length > 0 and state | length > 0 and country | length > 0 %}
                                   {% set formatted_location = location_format | replace('{city}', city) | replace('{state}', state) | replace('{country}', country) if has_full_location else '' %}
-                                  {% set location_if_unique = location_if_unique_template | replace('{location}', formatted_location) if has_full_location else '' %}
+                                  {% set location_if_unique = '' if (not has_full_location) or (combined_all_assets_have_location and combined_unique_locations | length == 1) else (location_if_unique_template | replace('{location}', formatted_location)) %}
                                   {% set item = asset_template
                                     | replace('{filename}', asset.filename | default('Unknown'))
                                     | replace('{description}', asset.description | default(''))
@@ -1480,11 +1548,15 @@ action:
                                   {% set ns.items = ns.items ~ item %}
                                 {% endfor %}
                                 {{ ns.items }}
-                              combined_message: >
+                              combined_message: >-
+                                {%- set comb_common_date = (common_date_template | replace('{date}', combined_unique_dates[0])) if combined_unique_dates | length == 1 else '' -%}
+                                {%- set comb_common_location = (common_location_template | replace('{location}', combined_unique_locations[0])) if combined_all_assets_have_location and combined_unique_locations | length == 1 else '' -%}
                                 {{ scheduled_assets_message_template
                                    | replace('{album_name}', combined_album_names)
                                    | replace('{album_url}', '')
                                    | replace('{asset_count}', combined_asset_count | string)
+                                   | replace('{common_date}', comb_common_date)
+                                   | replace('{common_location}', comb_common_location)
                                    | replace('{assets}', combined_assets_list) }}
 
                           # Send to notification targets
@@ -1624,16 +1696,18 @@ action:
             value_template: "{{ trigger.id == 'assets_added' and track_assets_added and filtered_added_count | int > 0 }}"
         sequence:
           - variables:
-              message: >
-                {% set tpl = message_assets_added_template %}
+              message: >-
+                {%- set tpl = message_assets_added_template -%}
+                {%- set msg_common_date = (common_date_template | replace('{date}', unique_dates[0])) if unique_dates | length == 1 else '' -%}
+                {%- set msg_common_location = (common_location_template | replace('{location}', unique_locations[0])) if all_assets_have_location and unique_locations | length == 1 else '' -%}
                 {{ tpl | replace('{album_name}', event_album_name)
                        | replace('{album_url}', event_album_url)
                        | replace('{added_count}', filtered_added_count | string)
                        | replace('{people}', people_list)
                        | replace('{assets}', assets_list)
                        | replace('{video_warning}', video_warning_text)
-                       | replace('{common_date}', common_date)
-                       | replace('{common_location}', common_location) }}
+                       | replace('{common_date}', msg_common_date)
+                       | replace('{common_location}', msg_common_location) }}
 
           - service: notify.send_message
             target:
@@ -1675,14 +1749,18 @@ action:
                     value_template: "{{ track_assets_added and filtered_added_count | int > 0 }}"
                 sequence:
                   - variables:
-                      message: >
-                        {% set tpl = message_assets_added_template %}
+                      message: >-
+                        {%- set tpl = message_assets_added_template -%}
+                        {%- set chg_common_date = (common_date_template | replace('{date}', unique_dates[0])) if unique_dates | length == 1 else '' -%}
+                        {%- set chg_common_location = (common_location_template | replace('{location}', unique_locations[0])) if all_assets_have_location and unique_locations | length == 1 else '' -%}
                         {{ tpl | replace('{album_name}', event_album_name)
                                | replace('{album_url}', event_album_url)
                                | replace('{added_count}', filtered_added_count | string)
                                | replace('{people}', people_list)
                                | replace('{assets}', assets_list)
-                               | replace('{video_warning}', video_warning_text) }}
+                               | replace('{video_warning}', video_warning_text)
+                               | replace('{common_date}', chg_common_date)
+                               | replace('{common_location}', chg_common_location) }}
 
                   - service: notify.send_message
                     target:
@@ -1850,16 +1928,18 @@ action:
           # Build the notification message for Telegram
           # Uses {video_warning} placeholder which is populated when videos are present
           - variables:
-              telegram_message: >
-                {% set tpl = message_assets_added_template %}
+              telegram_message: >-
+                {%- set tpl = message_assets_added_template -%}
+                {%- set tg_common_date = (common_date_template | replace('{date}', unique_dates[0])) if unique_dates | length == 1 else '' -%}
+                {%- set tg_common_location = (common_location_template | replace('{location}', unique_locations[0])) if all_assets_have_location and unique_locations | length == 1 else '' -%}
                 {{ tpl | replace('{album_name}', event_album_name)
                        | replace('{album_url}', event_album_url)
                        | replace('{added_count}', filtered_added_count | string)
                        | replace('{people}', people_list)
                        | replace('{assets}', assets_list)
                        | replace('{video_warning}', video_warning_text)
-                       | replace('{common_date}', common_date)
-                       | replace('{common_location}', common_location) }}
+                       | replace('{common_date}', tg_common_date)
+                       | replace('{common_location}', tg_common_location) }}
 
               # Build URLs list for media
               # URL preference: playback_url (videos), photo_url (images) > download_url > url
